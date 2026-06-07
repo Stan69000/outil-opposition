@@ -4681,6 +4681,7 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused, onGoToPv }) {
   const [selectedPv, setSelectedPv] = useState(null);
   const [activeLayers, setActiveLayers] = useState({ cadastre: false, plu: false });
   const [deliberations, setDeliberations] = useState([]);
+  const [fullscreen, setFullscreen] = useState(false);
   const delibMarkersRef = useRef([]);
 
 
@@ -4777,14 +4778,53 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused, onGoToPv }) {
 
   return (
     <div>
-      <SectionTitle sub="Visualisation géographique des délibérations d'urbanisme">
-        Carte urbanisme
-      </SectionTitle>
+      {!fullscreen && (
+        <SectionTitle sub="Visualisation géographique des délibérations d'urbanisme">
+          Carte urbanisme
+        </SectionTitle>
+      )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: "16px", alignItems: "start" }}>
+      {fullscreen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "#fff", display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", gap: "8px", padding: "8px 12px", borderBottom: `1px solid ${t.border}`, alignItems: "center" }}>
+            {Object.entries(IGN_LAYERS).map(([key, cfg]) => (
+              <Btn key={key} size="sm" variant={activeLayers[key] ? "primary" : "ghost"} onClick={() => toggleLayer(key)}>
+                {cfg.label}
+              </Btn>
+            ))}
+            <Btn size="sm" variant="ghost" onClick={() => mapInstance.current?.setView([45.8398, 4.6471], 14)}>Recentrer</Btn>
+            <div style={{ flex: 1 }} />
+            <Btn size="sm" variant="ghost" onClick={() => { setFullscreen(false); setTimeout(() => mapInstance.current?.invalidateSize(), 50); }}>
+              ✕ Quitter le plein écran
+            </Btn>
+          </div>
+          <div ref={mapRef} style={{ flex: 1 }} />
+          {activeLayers.plu && (
+            <div style={{ position: "absolute", bottom: "24px", left: "10px", zIndex: 2100,
+              background: "rgba(255,255,255,0.92)", border: `1px solid ${t.border}`,
+              borderRadius: "8px", padding: "8px 12px", fontSize: "11px", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }}>
+              <p style={{ color: t.textMuted, fontWeight: 700, margin: "0 0 6px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Zones PLU</p>
+              {[
+                { color: "#FBBF24", label: "U — Zone urbaine" },
+                { color: "#F97316", label: "AUc — À urbaniser (court terme)" },
+                { color: "#FDE68A", label: "AUs — À urbaniser (long terme)" },
+                { color: "#86EFAC", label: "A — Agricole" },
+                { color: "#4ADE80", label: "N — Naturelle protégée" },
+              ].map(({ color, label }) => (
+                <div key={label} style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "3px" }}>
+                  <div style={{ width: "14px", height: "14px", borderRadius: "3px", flexShrink: 0, background: color, border: "1px solid #475569" }} />
+                  <span style={{ color: t.text }}>{label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: fullscreen ? "none" : "grid", gridTemplateColumns: "1fr 300px", gap: "16px", alignItems: "start" }}>
         <div>
           {leafletReady && (
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px", alignItems: "center" }}>
               {Object.entries(IGN_LAYERS).map(([key, cfg]) => (
                 <Btn key={key} size="sm"
                   variant={activeLayers[key] ? "primary" : "ghost"}
@@ -4795,6 +4835,10 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused, onGoToPv }) {
               <Btn size="sm" variant="ghost"
                 onClick={() => mapInstance.current?.setView([45.8398, 4.6471], 14)}>
                 Recentrer
+              </Btn>
+              <Btn size="sm" variant="ghost"
+                onClick={() => { setFullscreen(true); setTimeout(() => mapInstance.current?.invalidateSize(), 50); }}>
+                ⤢ Plein écran
               </Btn>
             </div>
           )}
