@@ -95,4 +95,11 @@ export const api = {
     unsubscribe: (data) => req("DELETE", "/push/subscribe", data),
     test:        ()     => req("POST",   "/push/test"),
   },
+  config: {
+    get:         ()     => req("GET",  "/config"),
+    save:        (data) => req("POST", "/config", data),
+    testAI:      ()     => req("POST", "/config/test/ai"),
+    testLF:      ()     => req("POST", "/config/test/legifrance"),
+    testSMTP:    ()     => req("POST", "/config/test/smtp"),
+  },
 };

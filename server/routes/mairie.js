@@ -1,12 +1,15 @@
 const express = require("express");
 const axios = require("axios");
 const cheerio = require("cheerio");
-const { db, parsePv } = require("../db");
+const { db, parsePv, getConfig } = require("../db");
 
 const router = express.Router();
 
-const BASE_URL = "https://fleurieuxsurlarbresle.fr";
-const MAIN_URL = `${BASE_URL}/fr/rb/2187928/deliberations-prises`;
+function getUrls() {
+  const mainUrl = getConfig("commune_deliberations_url");
+  const base = mainUrl.match(/^(https?:\/\/[^/]+)/)?.[1] || getConfig("commune_mairie_url");
+  return { BASE_URL: base, MAIN_URL: mainUrl };
+}
 
 const MOIS = {
   janvier:"01", février:"02", mars:"03", avril:"04", mai:"05", juin:"06",
@@ -51,6 +54,7 @@ function nomFromLinkText(text) {
 
 // Scrape une page (URL) et retourne les séances avec leurs PDFs
 async function scrapePage(url) {
+  const { BASE_URL } = getUrls();
   const { data: html } = await axios.get(url, {
     timeout: 12000,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; Opposition-Fleurieux/1.0)" },
@@ -89,6 +93,7 @@ async function scrapePage(url) {
 
 // Récupère les URLs des années dans le sidebar de la page principale
 async function getYearUrls() {
+  const { BASE_URL, MAIN_URL } = getUrls();
   const { data: html } = await axios.get(MAIN_URL, {
     timeout: 10000,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; Opposition-Fleurieux/1.0)" },
@@ -108,6 +113,7 @@ async function getYearUrls() {
 }
 
 router.get("/sync", async (req, res) => {
+  const { MAIN_URL } = getUrls();
   const logs = [];
   const log = (msg, type = "info") => logs.push({ msg, type, ts: new Date().toLocaleTimeString("fr-FR") });
 
@@ -183,6 +189,7 @@ router.get("/sync", async (req, res) => {
 
 // Exposé pour le cron (appelable sans HTTP)
 async function runSync() {
+  const { MAIN_URL } = getUrls();
   const existingDates = new Set(
     db.prepare("SELECT date FROM pvs WHERE source = 'auto'").all().map(r => r.date)
   );
