@@ -129,11 +129,11 @@ function Badge({ label, color }) {
   );
 }
 
-function Card({ children, style={}, onClick, hover=true }) {
+const Card = React.forwardRef(function Card({ children, style={}, onClick, hover=true }, ref) {
   const t = useT();
   const [hov, setHov] = useState(false);
   return (
-    <div onClick={onClick}
+    <div ref={ref} onClick={onClick}
       onMouseEnter={() => hover && onClick && setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{ background: t.surface, border:`1px solid ${hov ? t.borderMid : t.border}`,
@@ -144,7 +144,7 @@ function Card({ children, style={}, onClick, hover=true }) {
       {children}
     </div>
   );
-}
+});
 
 function Btn({ children, onClick, variant="primary", size="md", disabled=false, style={} }) {
   const t = useT();
@@ -1011,7 +1011,7 @@ function VeilleLegifrance({ lois, setLois }) {
 }
 
 // ── PROCÈS-VERBAUX ─────────────────────────────────────────────────────────────
-function ProcessVerbaux({ pvs, setPvs, onGoToCarte }) {
+function ProcessVerbaux({ pvs, setPvs, onGoToCarte, openPvId, onOpenPvDone }) {
   const t = useT();
   const [sel, setSel] = useState(null);
   const [aiPanel, setAiPanel] = useState(null);
@@ -1019,6 +1019,19 @@ function ProcessVerbaux({ pvs, setPvs, onGoToCarte }) {
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState("Tous");
   const [form, setForm] = useState({ date:"", objet:"", pour:0, contre:0, abstention:0, points:"", anomalies:"", notes:"" });
+
+  const selCardRef = useRef(null);
+
+  useEffect(() => {
+    if (!openPvId || !pvs.length) return;
+    const pv = pvs.find(p => p.id === openPvId);
+    if (pv) {
+      setSel(pv);
+      setFilter("Tous");
+      setTimeout(() => selCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    }
+    onOpenPvDone && onOpenPvDone();
+  }, [openPvId, pvs]);
 
   const f = (k,v) => setForm(prev=>({...prev,[k]:v}));
 
@@ -1111,7 +1124,7 @@ function ProcessVerbaux({ pvs, setPvs, onGoToCarte }) {
         {filtered.map(pv=>{
           const isOpen = sel?.id===pv.id;
           return (
-            <Card key={pv.id} style={{ borderLeft:`3px solid ${statutColor(t,pv.statut)}` }}
+            <Card key={pv.id} ref={isOpen && openPvId === pv.id ? selCardRef : null} style={{ borderLeft:`3px solid ${statutColor(t,pv.statut)}` }}
               onClick={()=>setSel(isOpen?null:pv)}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                 <div style={{ flex:1, paddingRight:"12px" }}>
@@ -5131,6 +5144,7 @@ function useWindowWidth() {
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [focusDelib, setFocusDelib] = useState(null);
+  const [openPvId, setOpenPvId] = useState(null);
   const [lois, setLois] = useState([]);
   const [pvs, setPvs] = useState([]);
   const [failles, setFailles] = useState([]);
@@ -5200,7 +5214,7 @@ export default function App() {
     switch(tab) {
       case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} />;
       case "seance-live":   return <SeanceLive setPvs={setPvs} />;
-      case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} onGoToCarte={(d) => { setFocusDelib(d); setTab("carte"); }} />;
+      case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} openPvId={openPvId} onOpenPvDone={() => setOpenPvId(null)} onGoToCarte={(d) => { setFocusDelib(d); setTab("carte"); }} />;
       case "questions":     return <QuestionsCADA />;
       case "agenda":        return <AgendaPrep />;
       case "failles":       return <Failles failles={failles} setFailles={setFailles} />;
@@ -5218,7 +5232,7 @@ export default function App() {
       case "journal":       return <JournalTerrain pvs={pvs} failles={failles} />;
       case "veille":        return <VeilleReglementaire />;
       case "stats-elus":    return <StatsElus />;
-      case "carte":         return <CarteUrbanisme pvs={pvs} focusDelib={focusDelib} onFocused={() => setFocusDelib(null)} onGoToPv={(pvId) => { setFocusDelib(null); setTab("pv"); }} />;
+      case "carte":         return <CarteUrbanisme pvs={pvs} focusDelib={focusDelib} onFocused={() => setFocusDelib(null)} onGoToPv={(pvId) => { setOpenPvId(pvId); setTab("pv"); }} />;
       default: return null;
     }
   };
