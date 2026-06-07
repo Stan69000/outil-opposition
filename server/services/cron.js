@@ -42,10 +42,37 @@ async function runAutoSync() {
   }
 }
 
-function startCron() {
-  // Chaque lundi à 8h00
-  cron.schedule("0 8 * * 1", runAutoSync, { timezone: "Europe/Paris" });
-  console.log("[cron] Planifié : synchro mairie chaque lundi à 8h00");
+async function runVeilleReglementaire() {
+  console.log("[cron] Démarrage veille réglementaire...");
+  try {
+    const { scanVeilleReglementaire } = require("../routes/veille");
+    const inserted = await scanVeilleReglementaire();
+    if (inserted.length > 0) {
+      console.log(`[cron] Veille : ${inserted.length} nouvelle(s) alerte(s) réglementaire(s)`);
+      try {
+        const { sendPushNotification } = require("../routes/push");
+        await sendPushNotification(
+          "Veille réglementaire",
+          `${inserted.length} nouveau(x) texte(s) impactant votre commune`,
+          "/veille"
+        );
+      } catch (_) {}
+    } else {
+      console.log("[cron] Veille : aucune nouvelle alerte.");
+    }
+  } catch (err) {
+    console.error("[cron] Erreur veille réglementaire :", err.message);
+  }
 }
 
-module.exports = { startCron, registerSyncFn, runAutoSync };
+function startCron() {
+  // Synchro mairie : chaque lundi à 8h00
+  cron.schedule("0 8 * * 1", runAutoSync, { timezone: "Europe/Paris" });
+  console.log("[cron] Planifié : synchro mairie chaque lundi à 8h00");
+
+  // Veille réglementaire : chaque vendredi à 9h00
+  cron.schedule("0 9 * * 5", runVeilleReglementaire, { timezone: "Europe/Paris" });
+  console.log("[cron] Planifié : veille réglementaire chaque vendredi à 9h00");
+}
+
+module.exports = { startCron, registerSyncFn, runAutoSync, runVeilleReglementaire };

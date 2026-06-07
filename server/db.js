@@ -170,6 +170,88 @@ db.prepare(`
   )
 `).run();
 
+// ── BIBLIOTHÈQUE DE MODÈLES ───────────────────────────────────────────────────
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS modeles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre TEXT NOT NULL,
+    categorie TEXT DEFAULT 'Question écrite',
+    contenu TEXT NOT NULL,
+    variables TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`).run();
+
+// ── COURRIERS OFFICIELS ────────────────────────────────────────────────────────
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS courriers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT DEFAULT 'Question écrite',
+    destinataire TEXT DEFAULT 'Maire',
+    objet TEXT NOT NULL,
+    contenu TEXT NOT NULL,
+    date_envoi TEXT DEFAULT '',
+    date_reponse_limite TEXT DEFAULT '',
+    statut TEXT DEFAULT 'brouillon',
+    reponse TEXT DEFAULT '',
+    date_reponse TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`).run();
+
+// ── SUIVI DES ENGAGEMENTS ─────────────────────────────────────────────────────
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS engagements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre TEXT NOT NULL,
+    auteur TEXT DEFAULT '',
+    categorie TEXT DEFAULT 'Autre',
+    date_prise TEXT DEFAULT '',
+    echeance TEXT DEFAULT '',
+    statut TEXT DEFAULT 'Promis',
+    preuve_pv_id INTEGER DEFAULT 0,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`).run();
+
+// ── JOURNAL DE TERRAIN ────────────────────────────────────────────────────────
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS journal_terrain (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    lieu TEXT DEFAULT '',
+    type TEXT DEFAULT 'Constat terrain',
+    contenu TEXT NOT NULL,
+    tags TEXT DEFAULT '[]',
+    lien_pv_id INTEGER DEFAULT 0,
+    lien_faille_id INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`).run();
+
+// ── VEILLE RÉGLEMENTAIRE ─────────────────────────────────────────────────────
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS veille_alertes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre TEXT NOT NULL,
+    source TEXT DEFAULT 'JO',
+    categorie TEXT DEFAULT 'Communes',
+    resume TEXT DEFAULT '',
+    impact TEXT DEFAULT 'Moyenne',
+    url TEXT DEFAULT '',
+    date_parution TEXT DEFAULT '',
+    lu INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`).run();
+
+for (const sql of [
+  "ALTER TABLE live_points ADD COLUMN interventions TEXT DEFAULT '[]'",
+  "ALTER TABLE pvs ADD COLUMN geo TEXT DEFAULT ''",
+]) { try { db.prepare(sql).run(); } catch (_) {} }
+
 // ── AI USAGE LOG ──────────────────────────────────────────────────────────────
 db.prepare(`
   CREATE TABLE IF NOT EXISTS ai_usage_log (

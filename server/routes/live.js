@@ -5,9 +5,10 @@ const router = express.Router();
 
 function parseSeance(row) {
   if (!row) return null;
+  const points = db.prepare("SELECT * FROM live_points WHERE seance_id = ? ORDER BY ordre ASC").all(row.id);
   return {
     ...row,
-    points: db.prepare("SELECT * FROM live_points WHERE seance_id = ? ORDER BY ordre ASC").all(row.id),
+    points: points.map(p => ({ ...p, interventions: JSON.parse(p.interventions || "[]") })),
   };
 }
 
@@ -65,10 +66,10 @@ router.post("/:id/points", (req, res) => {
   res.json(db.prepare("SELECT * FROM live_points WHERE id = ?").get(result.lastInsertRowid));
 });
 
-// Mettre à jour un point (vote, résultat, anomalie, notes)
+// Mettre à jour un point (vote, résultat, anomalie, notes, interventions)
 router.put("/:id/points/:pid", (req, res) => {
   const { pid } = req.params;
-  const { vote_pour, vote_contre, vote_abstention, resultat, anomalie, anomalie_desc, notes, duree_min } = req.body;
+  const { vote_pour, vote_contre, vote_abstention, resultat, anomalie, anomalie_desc, notes, duree_min, interventions } = req.body;
 
   db.prepare(`
     UPDATE live_points SET
@@ -79,15 +80,18 @@ router.put("/:id/points/:pid", (req, res) => {
       anomalie        = COALESCE(?, anomalie),
       anomalie_desc   = COALESCE(?, anomalie_desc),
       notes           = COALESCE(?, notes),
-      duree_min       = COALESCE(?, duree_min)
+      duree_min       = COALESCE(?, duree_min),
+      interventions   = COALESCE(?, interventions)
     WHERE id = ?
   `).run(
     vote_pour ?? null, vote_contre ?? null, vote_abstention ?? null,
     resultat ?? null, anomalie ?? null, anomalie_desc ?? null,
-    notes ?? null, duree_min ?? null, pid
+    notes ?? null, duree_min ?? null,
+    interventions ? JSON.stringify(interventions) : null, pid
   );
 
-  res.json(db.prepare("SELECT * FROM live_points WHERE id = ?").get(pid));
+  const row = db.prepare("SELECT * FROM live_points WHERE id = ?").get(pid);
+  res.json({ ...row, interventions: JSON.parse(row.interventions || "[]") });
 });
 
 // Supprimer un point

@@ -1681,6 +1681,73 @@ function Dashboard({ lois, pvs, failles, setTab }) {
   );
 }
 
+// ── INTERVENTIONS (sous-composant SeanceLive) ─────────────────────────────────
+const TYPES_INTERVENTION = ["Pour", "Contre", "Abstention", "Question", "Remarque", "Explication"];
+
+function InterventionsList({ pt, onUpdate, t }) {
+  const [elu, setElu] = useState("");
+  const [type, setType] = useState("Remarque");
+  const [note, setNote] = useState("");
+  const [show, setShow] = useState(false);
+
+  const interventions = pt.interventions || [];
+
+  const add = () => {
+    if (!elu.trim()) return;
+    const updated = [...interventions, { elu: elu.trim(), type, note: note.trim() }];
+    onUpdate(pt.id, { interventions: updated });
+    setElu(""); setNote("");
+  };
+
+  const remove = (idx) => {
+    const updated = interventions.filter((_, i) => i !== idx);
+    onUpdate(pt.id, { interventions: updated });
+  };
+
+  return (
+    <div style={{ marginTop:"4px" }}>
+      <button onClick={() => setShow(s => !s)} style={{ background:"none", border:"none",
+        color:t.primary, cursor:"pointer", fontSize:"11px", fontWeight:600, padding:"0" }}>
+        {show ? "▼" : "▶"} Interventions ({interventions.length})
+      </button>
+      {show && (
+        <div style={{ marginTop:"8px", padding:"10px 12px", background:t.surfaceAlt,
+          borderRadius:"6px", border:`1px solid ${t.border}` }}>
+          {interventions.length > 0 && (
+            <div style={{ marginBottom:"8px", display:"flex", flexDirection:"column", gap:"4px" }}>
+              {interventions.map((iv, idx) => (
+                <div key={idx} style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+                  fontSize:"12px", color:t.text, padding:"3px 0" }}>
+                  <span>
+                    <span style={{ fontWeight:600 }}>{iv.elu}</span>
+                    <span style={{ color:t.primary, marginLeft:"6px", fontSize:"10px" }}>[{iv.type}]</span>
+                    {iv.note && <span style={{ color:t.textMuted, marginLeft:"6px" }}>{iv.note}</span>}
+                  </span>
+                  <button onClick={() => remove(idx)} style={{ background:"none", border:"none",
+                    color:t.textMuted, cursor:"pointer", fontSize:"14px" }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 120px", gap:"6px", marginBottom:"6px" }}>
+            <Input value={elu} onChange={e=>setElu(e.target.value)}
+              placeholder="Nom de l'élu" onKeyDown={e=>e.key==="Enter"&&add()} />
+            <Select value={type} onChange={e=>setType(e.target.value)}>
+              {TYPES_INTERVENTION.map(ty => <option key={ty} value={ty}>{ty}</option>)}
+            </Select>
+          </div>
+          <div style={{ display:"flex", gap:"6px" }}>
+            <Input value={note} onChange={e=>setNote(e.target.value)}
+              placeholder="Note (optionnel)" style={{ flex:1 }}
+              onKeyDown={e=>e.key==="Enter"&&add()} />
+            <Btn onClick={add} disabled={!elu.trim()} size="sm" variant="primary">+</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SÉANCE LIVE ────────────────────────────────────────────────────────────────
 function SeanceLive({ setPvs }) {
   const t = useT();
@@ -1944,16 +2011,32 @@ function SeanceLive({ setPvs }) {
                   <Input value={pt.anomalie_desc || ""} placeholder="Description de l'anomalie…"
                     onChange={e => updatePoint(pt.id, { anomalie_desc: e.target.value })} />
                 )}
+
+                {/* INTERVENTIONS */}
+                <InterventionsList pt={pt} onUpdate={updatePoint} t={t} />
               </div>
             )}
 
             {/* RÉSUMÉ si terminée */}
             {active.statut === "terminée" && (
-              <div style={{ display:"flex", gap:"12px", fontSize:"12px", color:t.textSec }}>
-                {(pt.vote_pour || pt.vote_contre) ? (
-                  <span>{pt.vote_pour}p / {pt.vote_contre}c / {pt.vote_abstention}a</span>
-                ) : null}
-                {pt.anomalie_desc && <span style={{ color:t.danger }}>{pt.anomalie_desc}</span>}
+              <div style={{ display:"flex", flexDirection:"column", gap:"4px" }}>
+                <div style={{ display:"flex", gap:"12px", fontSize:"12px", color:t.textSec }}>
+                  {(pt.vote_pour || pt.vote_contre) ? (
+                    <span>{pt.vote_pour}p / {pt.vote_contre}c / {pt.vote_abstention}a</span>
+                  ) : null}
+                  {pt.anomalie_desc && <span style={{ color:t.danger }}>{pt.anomalie_desc}</span>}
+                </div>
+                {(pt.interventions || []).length > 0 && (
+                  <div style={{ marginTop:"4px" }}>
+                    {(pt.interventions || []).map((iv, idx) => (
+                      <div key={idx} style={{ fontSize:"11px", color:t.textMuted, padding:"2px 0" }}>
+                        <span style={{ fontWeight:600, color:t.textSec }}>{iv.elu}</span>
+                        {iv.type && <span style={{ marginLeft:"4px", color:t.primary, fontSize:"10px" }}>[{iv.type}]</span>}
+                        {iv.note && <span style={{ marginLeft:"6px" }}>{iv.note}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </Card>
@@ -2911,6 +2994,1089 @@ function AdminPanel() {
   );
 }
 
+// ── EXPORT WORD ───────────────────────────────────────────────────────────────
+function ExportWordBtn({ titre, contenu, sous_titre = "" }) {
+  const t = useT();
+  const [loading, setLoading] = useState(false);
+  const download = async () => {
+    setLoading(true);
+    try {
+      const blob = await api.pdf.exportWord(titre, contenu, sous_titre);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${titre.slice(0, 40)}.docx`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { alert("Erreur export : " + e.message); }
+    setLoading(false);
+  };
+  return (
+    <Btn onClick={download} disabled={loading} variant="ghost" size="sm">
+      {loading ? "Export…" : "↓ .docx"}
+    </Btn>
+  );
+}
+
+// ── BIBLIOTHÈQUE DE MODÈLES ───────────────────────────────────────────────────
+function Modeles() {
+  const t = useT();
+  const [modeles, setModeles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [subTab, setSubTab] = useState("liste");
+  const [genForm, setGenForm] = useState({ categorie: "Question écrite", sujet: "", contexte: "" });
+  const [form, setForm] = useState({ titre: "", categorie: "Question écrite", contenu: "", variables: "" });
+  const [varValues, setVarValues] = useState({});
+  const [previewText, setPreviewText] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const CATS = ["Question écrite", "Demande CADA", "Recours gracieux", "Motion", "Amendement", "Courrier Préfet", "Autre"];
+  const CAT_COLORS = { "Question écrite": t.primary, "Demande CADA": t.warning, "Recours gracieux": t.danger,
+    "Motion": t.purple, "Amendement": t.success, "Courrier Préfet": t.textSec, "Autre": t.textMuted };
+
+  useEffect(() => {
+    api.modeles.list().then(setModeles).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const selectModele = (m) => {
+    setSelected(m);
+    const vars = {};
+    (m.variables || []).forEach(v => { vars[v] = ""; });
+    setVarValues(vars);
+    setPreviewText(m.contenu);
+    setSubTab("editer");
+  };
+
+  const updatePreview = (vals) => {
+    let text = selected?.contenu || "";
+    Object.entries(vals).forEach(([k, v]) => {
+      text = text.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), v || `{{${k}}}`);
+    });
+    setPreviewText(text);
+  };
+
+  const handleVarChange = (k, v) => {
+    const newVals = { ...varValues, [k]: v };
+    setVarValues(newVals);
+    updatePreview(newVals);
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(previewText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  };
+
+  const saveNew = async () => {
+    if (!form.titre || !form.contenu) return;
+    const vars = form.variables.split(",").map(v => v.trim()).filter(Boolean);
+    const created = await api.modeles.create({ ...form, variables: vars });
+    setModeles(prev => [...prev, created]);
+    setShowNew(false);
+    setForm({ titre: "", categorie: "Question écrite", contenu: "", variables: "" });
+  };
+
+  const generate = async () => {
+    if (!genForm.sujet) return;
+    setGenerating(true);
+    try {
+      const m = await api.modeles.generate(genForm);
+      const created = await api.modeles.create(m);
+      setModeles(prev => [...prev, created]);
+      selectModele(created);
+    } catch (e) { alert(e.message); }
+    setGenerating(false);
+  };
+
+  const removeModele = async (id) => {
+    await api.modeles.remove(id);
+    setModeles(prev => prev.filter(m => m.id !== id));
+    if (selected?.id === id) { setSelected(null); setSubTab("liste"); }
+  };
+
+  const grouped = CATS.reduce((acc, c) => {
+    acc[c] = modeles.filter(m => m.categorie === c);
+    return acc;
+  }, {});
+
+  return (
+    <div>
+      <SectionTitle sub="Modèles réutilisables pour vos courriers et documents officiels">
+        Bibliothèque de modèles
+      </SectionTitle>
+      <SubTabs tabs={[["liste","Modèles"],["editer","Éditeur"],["generer","Générer avec IA"],["nouveau","+ Nouveau"]]}
+        active={subTab} onSelect={setSubTab} />
+
+      {subTab === "liste" && (
+        <div>
+          {loading ? <Spinner label="Chargement des modèles…" /> : (
+            CATS.map(cat => grouped[cat].length > 0 && (
+              <div key={cat} style={{ marginBottom: "20px" }}>
+                <p style={{ color: CAT_COLORS[cat], fontSize: "11px", fontWeight: 700,
+                  textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>{cat}</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {grouped[cat].map(m => (
+                    <Card key={m.id} style={{ borderLeft: `3px solid ${CAT_COLORS[cat]}` }}
+                      onClick={() => selectModele(m)}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ color: t.text, fontSize: "13px", fontWeight: 500 }}>{m.titre}</span>
+                        <div style={{ display: "flex", gap: "6px" }} onClick={e => e.stopPropagation()}>
+                          <Btn onClick={() => selectModele(m)} variant="outline" size="sm">Utiliser</Btn>
+                          <Btn onClick={() => removeModele(m.id)} variant="ghost" size="sm">✕</Btn>
+                        </div>
+                      </div>
+                      {m.variables?.length > 0 && (
+                        <div style={{ display: "flex", gap: "4px", marginTop: "6px", flexWrap: "wrap" }}>
+                          {m.variables.map(v => (
+                            <span key={v} style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`,
+                              color: t.textMuted, fontSize: "10px", padding: "1px 6px", borderRadius: "4px" }}>
+                              {`{{${v}}}`}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+          {!loading && modeles.length === 0 && <EmptyState icon="≡" text="Aucun modèle. Générez-en avec l'IA ou créez-en un." />}
+        </div>
+      )}
+
+      {subTab === "editer" && (
+        <div>
+          {!selected ? (
+            <EmptyState icon="←" text="Sélectionnez un modèle dans la liste pour l'éditer." />
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+              <div>
+                <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700,
+                  textTransform: "uppercase", marginBottom: "10px" }}>Variables à remplir</p>
+                {Object.keys(varValues).length === 0
+                  ? <p style={{ color: t.textMuted, fontSize: "12px" }}>Aucune variable dans ce modèle.</p>
+                  : Object.entries(varValues).map(([k, v]) => (
+                    <div key={k} style={{ marginBottom: "10px" }}>
+                      <p style={{ color: t.textSec, fontSize: "11px", fontWeight: 600, marginBottom: "4px" }}>{`{{${k}}}`}</p>
+                      <Input value={v} onChange={e => handleVarChange(k, e.target.value)}
+                        placeholder={`Valeur pour ${k}…`} />
+                    </div>
+                  ))
+                }
+              </div>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                  <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase" }}>Aperçu</p>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <Btn onClick={copyToClipboard} variant={copied ? "success" : "ghost"} size="sm">
+                      {copied ? "Copié !" : "Copier"}
+                    </Btn>
+                    <ExportWordBtn titre={selected.titre} contenu={previewText} />
+                  </div>
+                </div>
+                <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px",
+                  padding: "16px", fontSize: "13px", color: t.textSec, lineHeight: "1.7",
+                  whiteSpace: "pre-wrap", maxHeight: "500px", overflowY: "auto" }}>
+                  {previewText}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === "generer" && (
+        <Card>
+          <p style={{ color: t.purple, fontSize: "12px", fontWeight: 700, margin: "0 0 14px 0",
+            textTransform: "uppercase", letterSpacing: "0.06em" }}>Générer un modèle avec IA</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Type de document</p>
+              <Select value={genForm.categorie} onChange={e => setGenForm(f => ({ ...f, categorie: e.target.value }))}>
+                {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+              </Select>
+            </div>
+            <div>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Sujet</p>
+              <Input value={genForm.sujet} onChange={e => setGenForm(f => ({ ...f, sujet: e.target.value }))}
+                placeholder="Ex: non-respect du délai de convocation du 15/03…" />
+            </div>
+            <div>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Contexte (optionnel)</p>
+              <Textarea value={genForm.contexte} onChange={e => setGenForm(f => ({ ...f, contexte: e.target.value }))}
+                placeholder="Détails supplémentaires…" rows={3} />
+            </div>
+            <Btn onClick={generate} disabled={generating || !genForm.sujet} variant="purple" size="lg">
+              {generating ? "Génération en cours…" : "Générer le modèle"}
+            </Btn>
+          </div>
+        </Card>
+      )}
+
+      {subTab === "nouveau" && (
+        <Card>
+          <p style={{ color: t.success, fontSize: "12px", fontWeight: 700, margin: "0 0 14px 0",
+            textTransform: "uppercase" }}>Nouveau modèle</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <Input value={form.titre} onChange={e => setForm(f => ({ ...f, titre: e.target.value }))} placeholder="Titre du modèle" />
+            <Select value={form.categorie} onChange={e => setForm(f => ({ ...f, categorie: e.target.value }))}>
+              {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+            </Select>
+            <Textarea value={form.contenu} onChange={e => setForm(f => ({ ...f, contenu: e.target.value }))}
+              placeholder="Contenu du modèle. Utilisez {{variable}} pour les champs dynamiques." rows={10} />
+            <Input value={form.variables} onChange={e => setForm(f => ({ ...f, variables: e.target.value }))}
+              placeholder="Variables séparées par virgule : date_seance, signataire, commune" />
+            <Btn onClick={saveNew} disabled={!form.titre || !form.contenu} variant="success">Enregistrer</Btn>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── COURRIERS OFFICIELS ────────────────────────────────────────────────────────
+function Courriers() {
+  const t = useT();
+  const [courriers, setCourriers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [subTab, setSubTab] = useState("liste");
+  const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ type: "Question écrite", destinataire: "Maire", objet: "", contenu: "", date_envoi: "", notes: "" });
+  const f = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const TYPES = ["Question écrite", "Demande CADA", "Recours gracieux", "Courrier Préfet", "Autre"];
+  const STATUS_COLOR = {
+    brouillon: t.textMuted, envoyé: t.primary, "en attente": t.warning,
+    répondu: t.success, relance: t.danger, classé: t.purple,
+  };
+
+  useEffect(() => {
+    api.courriers.list().then(setCourriers).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const generer = async () => {
+    if (!form.type) return;
+    setGenerating(true);
+    try {
+      const d = await api.courriers.generate({ type: form.type, destinataire: form.destinataire, sujet: form.objet, contexte: form.notes });
+      f("objet", d.objet); f("contenu", d.contenu);
+    } catch (e) { alert(e.message); }
+    setGenerating(false);
+  };
+
+  const sauvegarder = async () => {
+    if (!form.objet || !form.contenu) return;
+    setSaving(true);
+    try {
+      const c = await api.courriers.create(form);
+      setCourriers(prev => [c, ...prev]);
+      setForm({ type: "Question écrite", destinataire: "Maire", objet: "", contenu: "", date_envoi: "", notes: "" });
+      setSubTab("liste");
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const marquerEnvoye = async (id) => {
+    const updated = await api.courriers.envoyer(id);
+    setCourriers(prev => prev.map(c => c.id === id ? updated : c));
+  };
+
+  const updateStatut = async (id, statut) => {
+    const updated = await api.courriers.update(id, { statut });
+    setCourriers(prev => prev.map(c => c.id === id ? updated : c));
+  };
+
+  const retard = courriers.filter(c => c.jours_limite !== null && c.jours_limite <= 0 && !["répondu", "classé"].includes(c.statut));
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <SectionTitle sub="Rédaction, envoi et suivi de vos courriers officiels">
+          Courriers officiels
+        </SectionTitle>
+        <Btn onClick={() => setSubTab("nouveau")} variant="success" size="md">+ Nouveau</Btn>
+      </div>
+
+      {retard.length > 0 && (
+        <div style={{ background: t.dangerBg, border: `1px solid ${t.danger}44`, borderRadius: "10px",
+          padding: "12px 16px", marginBottom: "14px" }}>
+          <p style={{ color: t.danger, fontSize: "12px", fontWeight: 700, margin: "0 0 6px 0" }}>
+            Délais dépassés ({retard.length} courrier{retard.length > 1 ? "s" : ""})
+          </p>
+          {retard.map(c => (
+            <p key={c.id} style={{ color: t.danger, fontSize: "11px", margin: "2px 0" }}>
+              • {c.objet} — délai expiré depuis {Math.abs(c.jours_limite)}j
+            </p>
+          ))}
+        </div>
+      )}
+
+      <SubTabs tabs={[["liste", `Tous (${courriers.length})`], ["envoyes", "Envoyés"], ["attente", "En attente"], ["nouveau", "Rédiger"]]}
+        active={subTab} onSelect={setSubTab} />
+
+      {(subTab === "liste" || subTab === "envoyes" || subTab === "attente") && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {loading ? <Spinner /> : (courriers
+            .filter(c => subTab === "liste" ? true : subTab === "envoyes" ? ["envoyé", "répondu", "relance"].includes(c.statut) : c.statut === "brouillon")
+            .map(c => (
+              <Card key={c.id} style={{ borderLeft: `3px solid ${STATUS_COLOR[c.statut] || t.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                  <div style={{ flex: 1, paddingRight: "12px" }}>
+                    <h3 style={{ color: t.text, fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0" }}>{c.objet}</h3>
+                    <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                      <Badge label={c.type} color={t.textMuted} />
+                      <Badge label={c.statut} color={STATUS_COLOR[c.statut] || t.textMuted} />
+                      <Badge label={`→ ${c.destinataire}`} color={t.textSec} />
+                      {c.jours_limite !== null && c.jours_limite >= 0 && !["répondu", "classé"].includes(c.statut) && (
+                        <Badge label={`${c.jours_limite}j`} color={c.jours_limite < 7 ? t.danger : c.jours_limite < 15 ? t.warning : t.success} />
+                      )}
+                      {c.jours_limite !== null && c.jours_limite < 0 && !["répondu", "classé"].includes(c.statut) && (
+                        <Badge label="Délai expiré" color={t.danger} />
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    {c.statut === "brouillon" && (
+                      <Btn onClick={() => marquerEnvoye(c.id)} variant="primary" size="sm">Marquer envoyé</Btn>
+                    )}
+                    {["envoyé", "relance"].includes(c.statut) && (
+                      <Btn onClick={() => updateStatut(c.id, "répondu")} variant="success" size="sm">Répondu</Btn>
+                    )}
+                    <ExportWordBtn titre={c.objet} contenu={c.contenu} sous_titre={`À : ${c.destinataire}`} />
+                  </div>
+                </div>
+                {c.date_envoi && (
+                  <p style={{ color: t.textMuted, fontSize: "11px", margin: "0 0 4px 0" }}>
+                    Envoyé le {c.date_envoi}
+                    {c.date_reponse_limite ? ` · Délai réponse : ${c.date_reponse_limite}` : ""}
+                  </p>
+                )}
+              </Card>
+            ))
+          )}
+          {!loading && courriers.length === 0 && <EmptyState icon="@" text="Aucun courrier. Rédigez votre premier courrier." />}
+        </div>
+      )}
+
+      {subTab === "nouveau" && (
+        <Card>
+          <p style={{ color: t.primary, fontSize: "12px", fontWeight: 700, margin: "0 0 16px 0",
+            textTransform: "uppercase" }}>Rédiger un courrier</p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+            <div>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Type</p>
+              <Select value={form.type} onChange={e => f("type", e.target.value)} style={{ width: "100%" }}>
+                {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </Select>
+            </div>
+            <div>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Destinataire</p>
+              <Input value={form.destinataire} onChange={e => f("destinataire", e.target.value)} placeholder="Maire, Préfet du Rhône…" />
+            </div>
+          </div>
+          <div style={{ marginBottom: "10px" }}>
+            <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Objet</p>
+            <Input value={form.objet} onChange={e => f("objet", e.target.value)} placeholder="Objet du courrier…" />
+          </div>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "10px", alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Contenu</p>
+            </div>
+            <Btn onClick={generer} disabled={generating || !form.objet} variant="purple" size="sm">
+              {generating ? "Génération…" : "Générer avec IA"}
+            </Btn>
+          </div>
+          <Textarea value={form.contenu} onChange={e => f("contenu", e.target.value)}
+            placeholder="Rédigez ou générez le contenu…" rows={12} style={{ marginBottom: "10px" }} />
+          <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "10px", marginBottom: "14px" }}>
+            <div>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Date d'envoi (optionnel)</p>
+              <Input type="date" value={form.date_envoi} onChange={e => f("date_envoi", e.target.value)} />
+            </div>
+            <div>
+              <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "4px" }}>Notes internes</p>
+              <Input value={form.notes} onChange={e => f("notes", e.target.value)} placeholder="Notes…" />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Btn onClick={sauvegarder} disabled={saving || !form.objet || !form.contenu} variant="success">
+              {saving ? "Enregistrement…" : "Enregistrer"}
+            </Btn>
+            <ExportWordBtn titre={form.objet || "courrier"} contenu={form.contenu} />
+            <Btn onClick={() => setSubTab("liste")} variant="ghost">Annuler</Btn>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── SUIVI DES ENGAGEMENTS ─────────────────────────────────────────────────────
+function Engagements({ pvs }) {
+  const t = useT();
+  const [engagements, setEngagements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [filter, setFilter] = useState("Tous");
+  const [form, setForm] = useState({ titre: "", auteur: "", categorie: "Autre", date_prise: "", echeance: "", preuve_pv_id: 0, notes: "" });
+  const f = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const CATS = ["Budget", "Urbanisme", "Travaux", "Services publics", "Environnement", "Social", "Autre"];
+  const STATUTS = ["Promis", "En cours", "En retard", "Tenu", "Abandonné"];
+  const STATUT_COLOR = { Promis: t.primary, "En cours": t.warning, "En retard": t.danger, Tenu: t.success, Abandonné: t.textMuted };
+
+  useEffect(() => {
+    api.engagements.list().then(setEngagements).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const addEngagement = async () => {
+    if (!form.titre) return;
+    setSaving(true);
+    try {
+      const e = await api.engagements.create(form);
+      setEngagements(prev => [e, ...prev]);
+      setShowAdd(false);
+      setForm({ titre: "", auteur: "", categorie: "Autre", date_prise: "", echeance: "", preuve_pv_id: 0, notes: "" });
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const updateStatut = async (id, statut) => {
+    const updated = await api.engagements.update(id, { statut });
+    setEngagements(prev => prev.map(e => e.id === id ? updated : e));
+  };
+
+  const removeEng = async (id) => {
+    await api.engagements.remove(id);
+    setEngagements(prev => prev.filter(e => e.id !== id));
+  };
+
+  const filtered = filter === "Tous" ? engagements : engagements.filter(e => e.statut === filter);
+  const retard = engagements.filter(e => e.statut === "En retard").length;
+  const taux = engagements.length > 0
+    ? Math.round((engagements.filter(e => e.statut === "Tenu").length / engagements.length) * 100) : 0;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <SectionTitle sub="Promesses de la majorité vs réalisations concrètes">
+          Suivi des engagements
+        </SectionTitle>
+        <Btn onClick={() => setShowAdd(!showAdd)} variant={showAdd ? "ghost" : "success"} size="md">
+          {showAdd ? "Annuler" : "+ Engagement"}
+        </Btn>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "16px" }}>
+        {[
+          { label: "Total", value: engagements.length, color: t.primary },
+          { label: "En retard", value: retard, color: t.danger },
+          { label: "Tenus", value: engagements.filter(e => e.statut === "Tenu").length, color: t.success },
+          { label: "Taux tenu", value: `${taux}%`, color: taux > 60 ? t.success : taux > 30 ? t.warning : t.danger },
+        ].map(s => (
+          <Card key={s.label} style={{ textAlign: "center", padding: "14px" }} hover={false}>
+            <div style={{ color: s.color, fontSize: "22px", fontWeight: 700 }}>{s.value}</div>
+            <div style={{ color: t.textMuted, fontSize: "11px", marginTop: "4px" }}>{s.label}</div>
+          </Card>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Card style={{ marginBottom: "16px", borderColor: t.success + "44" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+            <Input value={form.titre} onChange={e => f("titre", e.target.value)} placeholder="Titre de l'engagement" />
+            <Input value={form.auteur} onChange={e => f("auteur", e.target.value)} placeholder="Auteur (ex: Maire)" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 160px 160px", gap: "10px", marginBottom: "10px" }}>
+            <Select value={form.categorie} onChange={e => f("categorie", e.target.value)} style={{ width: "100%" }}>
+              {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+            </Select>
+            <Input type="date" value={form.date_prise} onChange={e => f("date_prise", e.target.value)} />
+            <Input type="date" value={form.echeance} onChange={e => f("echeance", e.target.value)} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 200px", gap: "10px", marginBottom: "14px" }}>
+            <Input value={form.notes} onChange={e => f("notes", e.target.value)} placeholder="Notes / source (PV, discours…)" />
+            <Select value={form.preuve_pv_id} onChange={e => f("preuve_pv_id", +e.target.value)} style={{ width: "100%" }}>
+              <option value={0}>PV de référence (optionnel)</option>
+              {pvs.map(p => <option key={p.id} value={p.id}>{p.date} — {p.objet.slice(0, 40)}</option>)}
+            </Select>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Btn onClick={addEngagement} disabled={saving || !form.titre} variant="success">
+              {saving ? "Enregistrement…" : "Enregistrer"}
+            </Btn>
+            <Btn onClick={() => setShowAdd(false)} variant="ghost">Annuler</Btn>
+          </div>
+        </Card>
+      )}
+
+      <div style={{ display: "flex", gap: "5px", marginBottom: "14px", flexWrap: "wrap" }}>
+        {["Tous", ...STATUTS].map(s => (
+          <Btn key={s} onClick={() => setFilter(s)} variant={filter === s ? "primary" : "ghost"} size="sm">{s}</Btn>
+        ))}
+      </div>
+
+      {loading ? <Spinner /> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {filtered.map(eng => (
+            <Card key={eng.id} style={{ borderLeft: `4px solid ${STATUT_COLOR[eng.statut] || t.border}` }} hover={false}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1, paddingRight: "12px" }}>
+                  <h3 style={{ color: t.text, fontSize: "13px", fontWeight: 600, margin: "0 0 6px 0" }}>{eng.titre}</h3>
+                  <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                    <Badge label={eng.statut} color={STATUT_COLOR[eng.statut] || t.textMuted} />
+                    <Badge label={eng.categorie} color={t.textMuted} />
+                    {eng.auteur && <Badge label={eng.auteur} color={t.textSec} />}
+                    {eng.echeance && <Badge label={`Échéance : ${eng.echeance}`}
+                      color={eng.jours_echeance !== null && eng.jours_echeance < 0 ? t.danger : t.textMuted} />}
+                    {eng.jours_echeance !== null && eng.jours_echeance >= 0 && eng.jours_echeance <= 30
+                      && !["Tenu", "Abandonné"].includes(eng.statut) && (
+                      <Badge label={`${eng.jours_echeance}j`} color={eng.jours_echeance < 7 ? t.danger : t.warning} />
+                    )}
+                  </div>
+                  {eng.notes && <p style={{ color: t.textMuted, fontSize: "11px", margin: "6px 0 0", fontStyle: "italic" }}>{eng.notes}</p>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                  {!["Tenu", "Abandonné"].includes(eng.statut) && (
+                    <>
+                      {eng.statut === "Promis" && (
+                        <Btn onClick={() => updateStatut(eng.id, "En cours")} variant="warning" size="sm">→ En cours</Btn>
+                      )}
+                      {["Promis", "En cours", "En retard"].includes(eng.statut) && (
+                        <Btn onClick={() => updateStatut(eng.id, "Tenu")} variant="success" size="sm">✓ Tenu</Btn>
+                      )}
+                      <Btn onClick={() => updateStatut(eng.id, "Abandonné")} variant="ghost" size="sm">Abandonné</Btn>
+                    </>
+                  )}
+                  <Btn onClick={() => removeEng(eng.id)} variant="ghost" size="sm" style={{ color: t.danger }}>✕</Btn>
+                </div>
+              </div>
+            </Card>
+          ))}
+          {filtered.length === 0 && <EmptyState icon="✓" text={filter === "Tous" ? "Aucun engagement enregistré." : `Aucun engagement avec le statut "${filter}".`} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── JOURNAL DE TERRAIN ────────────────────────────────────────────────────────
+function JournalTerrain({ pvs, failles }) {
+  const t = useT();
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [filter, setFilter] = useState("Tous");
+  const [form, setForm] = useState({
+    date: new Date().toISOString().slice(0, 10),
+    lieu: "", type: "Constat terrain", contenu: "",
+    tags: "", lien_pv_id: 0, lien_faille_id: 0,
+  });
+  const f = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const TYPES = ["Constat terrain", "Réunion publique", "Contact citoyen", "Observation chantier", "Réunion interne", "Autre"];
+  const TYPE_COLOR = {
+    "Constat terrain": t.warning, "Réunion publique": t.primary, "Contact citoyen": t.success,
+    "Observation chantier": t.danger, "Réunion interne": t.purple, "Autre": t.textMuted,
+  };
+
+  useEffect(() => {
+    api.journal.list().then(setEntries).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const addEntry = async () => {
+    if (!form.contenu) return;
+    setSaving(true);
+    try {
+      const tags = form.tags.split(",").map(t => t.trim()).filter(Boolean);
+      const e = await api.journal.create({ ...form, tags, lien_pv_id: +form.lien_pv_id, lien_faille_id: +form.lien_faille_id });
+      setEntries(prev => [e, ...prev]);
+      setShowAdd(false);
+      setForm({ date: new Date().toISOString().slice(0, 10), lieu: "", type: "Constat terrain", contenu: "", tags: "", lien_pv_id: 0, lien_faille_id: 0 });
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const removeEntry = async (id) => {
+    await api.journal.remove(id);
+    setEntries(prev => prev.filter(e => e.id !== id));
+  };
+
+  const filtered = filter === "Tous" ? entries : entries.filter(e => e.type === filter);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <SectionTitle sub="Notes de terrain, constats, réunions et contacts citoyens">
+          Journal de terrain
+        </SectionTitle>
+        <Btn onClick={() => setShowAdd(!showAdd)} variant={showAdd ? "ghost" : "success"} size="md">
+          {showAdd ? "Annuler" : "+ Note"}
+        </Btn>
+      </div>
+
+      {showAdd && (
+        <Card style={{ marginBottom: "16px", borderColor: t.success + "44" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "160px 1fr 1fr", gap: "10px", marginBottom: "10px" }}>
+            <Input type="date" value={form.date} onChange={e => f("date", e.target.value)} />
+            <Input value={form.lieu} onChange={e => f("lieu", e.target.value)} placeholder="Lieu (optionnel)" />
+            <Select value={form.type} onChange={e => f("type", e.target.value)} style={{ width: "100%" }}>
+              {TYPES.map(tp => <option key={tp} value={tp}>{tp}</option>)}
+            </Select>
+          </div>
+          <Textarea value={form.contenu} onChange={e => f("contenu", e.target.value)}
+            placeholder="Décrivez ce que vous avez observé, entendu ou décidé…" rows={5}
+            style={{ marginBottom: "10px" }} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+            <Input value={form.tags} onChange={e => f("tags", e.target.value)} placeholder="Tags : PLU, budget, voirie" />
+            <Select value={form.lien_pv_id} onChange={e => f("lien_pv_id", e.target.value)} style={{ width: "100%" }}>
+              <option value={0}>Lien PV (optionnel)</option>
+              {pvs.map(p => <option key={p.id} value={p.id}>{p.date} — {p.objet.slice(0, 30)}</option>)}
+            </Select>
+            <Select value={form.lien_faille_id} onChange={e => f("lien_faille_id", e.target.value)} style={{ width: "100%" }}>
+              <option value={0}>Lien faille (optionnel)</option>
+              {failles.map(f => <option key={f.id} value={f.id}>{f.titre.slice(0, 35)}</option>)}
+            </Select>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Btn onClick={addEntry} disabled={saving || !form.contenu} variant="success">
+              {saving ? "Enregistrement…" : "Enregistrer"}
+            </Btn>
+            <Btn onClick={() => setShowAdd(false)} variant="ghost">Annuler</Btn>
+          </div>
+        </Card>
+      )}
+
+      <div style={{ display: "flex", gap: "5px", marginBottom: "14px", flexWrap: "wrap" }}>
+        {["Tous", ...TYPES].map(tp => (
+          <Btn key={tp} onClick={() => setFilter(tp)} variant={filter === tp ? "primary" : "ghost"} size="sm">{tp}</Btn>
+        ))}
+      </div>
+
+      {loading ? <Spinner /> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {filtered.map(entry => (
+            <Card key={entry.id} style={{ borderLeft: `3px solid ${TYPE_COLOR[entry.type] || t.border}` }} hover={false}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1, paddingRight: "12px" }}>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "6px", flexWrap: "wrap" }}>
+                    <Badge label={entry.type} color={TYPE_COLOR[entry.type] || t.textMuted} />
+                    <span style={{ color: t.textMuted, fontSize: "11px" }}>{entry.date}</span>
+                    {entry.lieu && <span style={{ color: t.textMuted, fontSize: "11px" }}>· {entry.lieu}</span>}
+                  </div>
+                  <p style={{ color: t.textSec, fontSize: "13px", lineHeight: "1.6", margin: "0 0 8px 0",
+                    whiteSpace: "pre-wrap" }}>{entry.contenu}</p>
+                  {entry.tags?.length > 0 && (
+                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                      {entry.tags.map(tag => (
+                        <span key={tag} style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`,
+                          color: t.textMuted, fontSize: "10px", padding: "1px 6px", borderRadius: "4px" }}>#{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                  {entry.lien_pv_id > 0 && (
+                    <p style={{ color: t.primary, fontSize: "11px", margin: "6px 0 0" }}>
+                      → Lié au PV #{entry.lien_pv_id}
+                    </p>
+                  )}
+                  {entry.lien_faille_id > 0 && (
+                    <p style={{ color: t.danger, fontSize: "11px", margin: "4px 0 0" }}>
+                      → Lié à la faille #{entry.lien_faille_id}
+                    </p>
+                  )}
+                </div>
+                <Btn onClick={() => removeEntry(entry.id)} variant="ghost" size="sm" style={{ color: t.danger }}>✕</Btn>
+              </div>
+            </Card>
+          ))}
+          {filtered.length === 0 && <EmptyState icon="+" text="Aucune note. Commencez par documenter votre première observation." />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── STATS ÉLUS ────────────────────────────────────────────────────────────────
+function StatsElus() {
+  const t = useT();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const loadStats = async () => {
+    setLoading(true); setError(null);
+    try { setData(await api.analyses.elus()); }
+    catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  const IMPACT_COLOR = { Haute: t.danger, Moyenne: t.warning, Basse: t.success };
+
+  return (
+    <div>
+      <SectionTitle sub="Présences, votes et thèmes d'intervention par élu (2020-2026)">
+        Statistiques élus
+      </SectionTitle>
+
+      {!data && !loading && (
+        <Card style={{ textAlign: "center", padding: "48px" }}>
+          <p style={{ color: t.textMuted, fontSize: "13px", marginBottom: "16px" }}>
+            Analyse IA des comportements et présences sur l'ensemble des séances
+          </p>
+          <Btn onClick={loadStats} variant="primary" size="lg">Analyser les élus (IA)</Btn>
+        </Card>
+      )}
+
+      {loading && <Spinner label="Claude analyse les données élus…" />}
+
+      {error && (
+        <div style={{ background: t.dangerBg, border: `1px solid ${t.danger}44`,
+          borderRadius: "8px", padding: "16px", color: t.danger, fontSize: "13px" }}>
+          Erreur : {error}
+        </div>
+      )}
+
+      {data && !error && (
+        <div>
+          {data.analyse_globale && (
+            <Card style={{ marginBottom: "16px", borderLeft: `3px solid ${t.primary}` }}>
+              <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, margin: "0 0 8px 0",
+                textTransform: "uppercase" }}>Analyse globale · {data.periode}</p>
+              <p style={{ color: t.textSec, fontSize: "13px", lineHeight: "1.7", margin: 0 }}>
+                {data.analyse_globale}
+              </p>
+            </Card>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {(data.elus || []).map((elu, i) => (
+              <Card key={i} hover={false}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+                  <div>
+                    <h3 style={{ color: t.text, fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0" }}>{elu.nom}</h3>
+                    {elu.role && <span style={{ color: t.textMuted, fontSize: "11px" }}>{elu.role}</span>}
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ color: elu.presence_pct > 80 ? t.success : elu.presence_pct > 60 ? t.warning : t.danger,
+                        fontSize: "18px", fontWeight: 700 }}>{elu.presence_pct}%</div>
+                      <div style={{ color: t.textMuted, fontSize: "10px" }}>présence</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: "12px", marginBottom: "8px",
+                  padding: "8px 12px", background: t.surfaceAlt, borderRadius: "6px", flexWrap: "wrap" }}>
+                  <span style={{ color: t.success, fontSize: "12px" }}>✓ {elu.votes_pour} pour</span>
+                  <span style={{ color: t.danger, fontSize: "12px" }}>✗ {elu.votes_contre} contre</span>
+                  {elu.themes?.length > 0 && (
+                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                      {elu.themes.map(th => <Badge key={th} label={th} color={t.primary} />)}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ height: "6px", background: t.border, borderRadius: "3px", overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${elu.presence_pct}%`,
+                    background: elu.presence_pct > 80 ? t.success : elu.presence_pct > 60 ? t.warning : t.danger,
+                    borderRadius: "3px", transition: "width 0.4s" }} />
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          <div style={{ marginTop: "14px", textAlign: "right" }}>
+            <Btn onClick={loadStats} variant="ghost" size="sm">Rafraîchir</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── VEILLE RÉGLEMENTAIRE ─────────────────────────────────────────────────────
+function VeilleReglementaire() {
+  const t = useT();
+  const [alertes, setAlertes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
+  const [filter, setFilter] = useState("Tous");
+
+  const CATS = ["Finances", "Urbanisme", "Élus", "Marchés publics", "Environnement", "RH", "Autre"];
+  const IMPACT_COLOR = { Haute: t.danger, Moyenne: t.warning, Basse: t.success };
+
+  useEffect(() => {
+    api.veille.list().then(setAlertes).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const scan = async () => {
+    setScanning(true);
+    try {
+      const { alertes: nouvelles } = await api.veille.scan();
+      if (nouvelles.length > 0) setAlertes(prev => [...nouvelles, ...prev]);
+      else alert("Aucune nouvelle alerte réglementaire détectée.");
+    } catch (e) { alert(e.message); }
+    setScanning(false);
+  };
+
+  const markRead = async (id) => {
+    await api.veille.markRead(id);
+    setAlertes(prev => prev.map(a => a.id === id ? { ...a, lu: 1 } : a));
+  };
+
+  const markAllRead = async () => {
+    await api.veille.markAllRead();
+    setAlertes(prev => prev.map(a => ({ ...a, lu: 1 })));
+  };
+
+  const remove = async (id) => {
+    await api.veille.remove(id);
+    setAlertes(prev => prev.filter(a => a.id !== id));
+  };
+
+  const nonLues = alertes.filter(a => !a.lu).length;
+  const filtered = filter === "Tous" ? alertes : alertes.filter(a => a.categorie === filter);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <SectionTitle sub="Nouvelles lois, décrets et circulaires DGCL impactant votre commune">
+          Veille réglementaire
+        </SectionTitle>
+        <div style={{ display: "flex", gap: "8px" }}>
+          {nonLues > 0 && (
+            <Btn onClick={markAllRead} variant="ghost" size="sm">Tout marquer lu</Btn>
+          )}
+          <Btn onClick={scan} disabled={scanning} variant="primary" size="md">
+            {scanning ? "Analyse en cours…" : "Scanner maintenant"}
+          </Btn>
+        </div>
+      </div>
+
+      {nonLues > 0 && (
+        <div style={{ background: t.primaryBg, border: `1px solid ${t.primary}44`, borderRadius: "10px",
+          padding: "10px 16px", marginBottom: "14px" }}>
+          <span style={{ color: t.primary, fontSize: "12px", fontWeight: 600 }}>
+            {nonLues} nouvelle{nonLues > 1 ? "s" : ""} alerte{nonLues > 1 ? "s" : ""} réglementaire{nonLues > 1 ? "s" : ""}
+          </span>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: "5px", marginBottom: "14px", flexWrap: "wrap" }}>
+        {["Tous", ...CATS].map(c => (
+          <Btn key={c} onClick={() => setFilter(c)} variant={filter === c ? "primary" : "ghost"} size="sm">{c}</Btn>
+        ))}
+      </div>
+
+      {loading ? <Spinner label="Chargement des alertes…" /> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {filtered.map(alerte => (
+            <Card key={alerte.id}
+              style={{ borderLeft: `3px solid ${IMPACT_COLOR[alerte.impact] || t.border}`,
+                opacity: alerte.lu ? 0.7 : 1 }}
+              hover={false}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1, paddingRight: "12px" }}>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "6px", flexWrap: "wrap" }}>
+                    {!alerte.lu && (
+                      <div style={{ width: "7px", height: "7px", borderRadius: "50%",
+                        background: t.primary, flexShrink: 0 }} />
+                    )}
+                    <h3 style={{ color: t.text, fontSize: "13px", fontWeight: alerte.lu ? 400 : 600, margin: 0 }}>
+                      {alerte.titre}
+                    </h3>
+                  </div>
+                  <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginBottom: "8px" }}>
+                    <Badge label={alerte.source} color={t.textMuted} />
+                    <Badge label={alerte.categorie} color={t.primary} />
+                    <Badge label={`Impact ${alerte.impact}`} color={IMPACT_COLOR[alerte.impact] || t.textMuted} />
+                    {alerte.date_parution && <span style={{ color: t.textMuted, fontSize: "11px" }}>{alerte.date_parution}</span>}
+                  </div>
+                  {alerte.resume && (
+                    <p style={{ color: t.textSec, fontSize: "13px", lineHeight: "1.6", margin: 0 }}>{alerte.resume}</p>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                  {!alerte.lu && (
+                    <Btn onClick={() => markRead(alerte.id)} variant="ghost" size="sm">Lu</Btn>
+                  )}
+                  {alerte.url && (
+                    <a href={alerte.url} target="_blank" rel="noreferrer"
+                      style={{ padding: "4px 10px", border: `1px solid ${t.border}`, borderRadius: "6px",
+                        color: t.textSec, fontSize: "11px", textDecoration: "none", textAlign: "center" }}>
+                      Lire →
+                    </a>
+                  )}
+                  <Btn onClick={() => remove(alerte.id)} variant="ghost" size="sm" style={{ color: t.danger }}>✕</Btn>
+                </div>
+              </div>
+            </Card>
+          ))}
+          {filtered.length === 0 && (
+            <EmptyState icon="§" text={filter === "Tous"
+              ? "Aucune alerte. Cliquez sur 'Scanner maintenant' pour lancer une veille."
+              : `Aucune alerte dans la catégorie "${filter}".`} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CARTE URBANISME ───────────────────────────────────────────────────────────
+function CarteUrbanisme({ pvs }) {
+  const t = useT();
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const markersRef = useRef([]);
+  const [leafletReady, setLeafletReady] = useState(false);
+  const [selectedPv, setSelectedPv] = useState(null);
+  const [geoForm, setGeoForm] = useState({ pvId: 0, lat: "", lng: "", adresse: "" });
+  const [geocoding, setGeocoding] = useState(false);
+  const [pvGeos, setPvGeos] = useState([]);
+
+  const pvUrba = pvs.filter(p =>
+    p.objet?.toLowerCase().includes("plu") ||
+    p.objet?.toLowerCase().includes("urban") ||
+    p.objet?.toLowerCase().includes("lotissement") ||
+    p.objet?.toLowerCase().includes("construction") ||
+    p.objet?.toLowerCase().includes("permis") ||
+    p.geo
+  );
+
+  useEffect(() => {
+    import("leaflet").then(L => {
+      if (!window._leafletCSSLoaded) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+        document.head.appendChild(link);
+        window._leafletCSSLoaded = true;
+      }
+      window.L = L.default || L;
+      setLeafletReady(true);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!leafletReady || !mapRef.current || mapInstance.current) return;
+    const L = window.L;
+    const map = L.map(mapRef.current).setView([45.856, 4.602], 14);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap",
+      maxZoom: 19,
+    }).addTo(map);
+    mapInstance.current = map;
+
+    const geoData = pvs.filter(p => p.geo).map(p => {
+      try { return { pv: p, geo: JSON.parse(p.geo) }; } catch { return null; }
+    }).filter(Boolean);
+
+    geoData.forEach(({ pv, geo }) => {
+      const color = pv.statut === "Alerte" ? "#EF4444" : pv.statut === "Analysé" ? "#3B82F6" : "#22C55E";
+      const marker = L.circleMarker([geo.lat, geo.lng], { radius: 10, color, fillColor: color, fillOpacity: 0.7 })
+        .addTo(map)
+        .bindPopup(`<b>${pv.date}</b><br>${pv.objet}<br><small>${geo.adresse || ""}</small>`);
+      markersRef.current.push(marker);
+    });
+
+    setPvGeos(geoData);
+  }, [leafletReady, pvs]);
+
+  const geocodeAdresse = async () => {
+    if (!geoForm.adresse) return;
+    setGeocoding(true);
+    try {
+      const resp = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(geoForm.adresse)}&limit=1`);
+      const data = await resp.json();
+      if (data.features?.length > 0) {
+        const [lng, lat] = data.features[0].geometry.coordinates;
+        setGeoForm(f => ({ ...f, lat: lat.toFixed(6), lng: lng.toFixed(6) }));
+      } else {
+        alert("Adresse non trouvée. Essayez une adresse plus précise.");
+      }
+    } catch { alert("Erreur de géocodage."); }
+    setGeocoding(false);
+  };
+
+  const saveGeo = async () => {
+    if (!geoForm.pvId || !geoForm.lat || !geoForm.lng) return;
+    const geo = JSON.stringify({ lat: +geoForm.lat, lng: +geoForm.lng, adresse: geoForm.adresse });
+    await api.pvs.update(geoForm.pvId, { geo });
+    alert("Position enregistrée. Rechargez la carte pour voir le marqueur.");
+    setGeoForm({ pvId: 0, lat: "", lng: "", adresse: "" });
+  };
+
+  return (
+    <div>
+      <SectionTitle sub="Visualisation géographique des délibérations d'urbanisme">
+        Carte urbanisme
+      </SectionTitle>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: "16px", alignItems: "start" }}>
+        <div>
+          {!leafletReady && <Spinner label="Chargement de la carte…" />}
+          <div ref={mapRef} style={{ height: "500px", borderRadius: "10px", border: `1px solid ${t.border}`,
+            display: leafletReady ? "block" : "none" }} />
+          <p style={{ color: t.textMuted, fontSize: "11px", marginTop: "6px" }}>
+            Fond de carte : OpenStreetMap · Géocodage : data.gouv.fr (API Adresse)
+          </p>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <Card>
+            <p style={{ color: t.primary, fontSize: "11px", fontWeight: 700, margin: "0 0 12px 0",
+              textTransform: "uppercase" }}>Géolocaliser un PV</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <Select value={geoForm.pvId} onChange={e => setGeoForm(f => ({ ...f, pvId: +e.target.value }))} style={{ width: "100%" }}>
+                <option value={0}>Choisir un PV…</option>
+                {pvUrba.map(p => <option key={p.id} value={p.id}>{p.date} — {p.objet.slice(0, 30)}</option>)}
+              </Select>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <Input value={geoForm.adresse} onChange={e => setGeoForm(f => ({ ...f, adresse: e.target.value }))}
+                  placeholder="Adresse ou lieu…" style={{ flex: 1 }}
+                  onKeyDown={e => e.key === "Enter" && geocodeAdresse()} />
+                <Btn onClick={geocodeAdresse} disabled={geocoding || !geoForm.adresse} variant="ghost" size="sm">
+                  {geocoding ? "…" : "Géo"}
+                </Btn>
+              </div>
+              {geoForm.lat && geoForm.lng && (
+                <p style={{ color: t.success, fontSize: "11px" }}>
+                  Coordonnées : {geoForm.lat}, {geoForm.lng}
+                </p>
+              )}
+              <Btn onClick={saveGeo} disabled={!geoForm.pvId || !geoForm.lat} variant="primary" size="sm">
+                Enregistrer la position
+              </Btn>
+            </div>
+          </Card>
+
+          <Card>
+            <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, margin: "0 0 10px 0",
+              textTransform: "uppercase" }}>PVs urbanisme</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "5px", maxHeight: "300px", overflowY: "auto" }}>
+              {pvUrba.map(p => (
+                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "6px 8px", background: t.surfaceAlt, borderRadius: "6px" }}>
+                  <span style={{ color: t.textSec, fontSize: "11px", flex: 1, paddingRight: "8px" }}>
+                    {p.date} — {p.objet.slice(0, 30)}
+                  </span>
+                  <div style={{ width: "8px", height: "8px", borderRadius: "50%",
+                    background: p.geo ? t.success : t.textMuted, flexShrink: 0 }} />
+                </div>
+              ))}
+              {pvUrba.length === 0 && <p style={{ color: t.textMuted, fontSize: "12px" }}>Aucun PV d'urbanisme.</p>}
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── NAV GROUPS ────────────────────────────────────────────────────────────────
 const NAV_GROUPS = [
   {
@@ -2932,10 +4098,27 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: "Rédaction",
+    items: [
+      { id:"modeles",      label:"Modèles",          icon:"□" },
+      { id:"courriers",    label:"Courriers",        icon:"✉" },
+    ],
+  },
+  {
+    label: "Suivi",
+    items: [
+      { id:"engagements",  label:"Engagements",     icon:"◎" },
+      { id:"journal",      label:"Journal terrain", icon:"✎" },
+      { id:"veille",       label:"Veille régl.",    icon:"◉" },
+    ],
+  },
+  {
     label: "Analyses",
     items: [
       { id:"analyses",     label:"Analyses IA",     icon:"◈" },
+      { id:"stats-elus",   label:"Stats élus",      icon:"∑" },
       { id:"agenda",       label:"Agenda",          icon:"+" },
+      { id:"carte",        label:"Carte urbanisme", icon:"⊕" },
     ],
   },
   {
@@ -3045,6 +4228,13 @@ export default function App() {
       case "historique":    return <Historique pvs={pvs} failles={failles} />;
       case "config":        return <Configuration />;
       case "admin":         return <AdminPanel />;
+      case "modeles":       return <Modeles />;
+      case "courriers":     return <Courriers />;
+      case "engagements":   return <Engagements pvs={pvs} />;
+      case "journal":       return <JournalTerrain pvs={pvs} failles={failles} />;
+      case "veille":        return <VeilleReglementaire />;
+      case "stats-elus":    return <StatsElus />;
+      case "carte":         return <CarteUrbanisme pvs={pvs} />;
       default: return null;
     }
   };
