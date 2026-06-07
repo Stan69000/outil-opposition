@@ -1,32 +1,30 @@
 const express = require("express");
 const axios = require("axios");
-const Anthropic = require("@anthropic-ai/sdk");
-const { db } = require("../db");
+const { getConfig } = require("../db");
+const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const OFGL_BASE = "https://data.ofgl.fr/api/explore/v2.1/catalog/datasets";
-const INSEE_FLEURIEUX = "69082";
 
 // Fetch données OFGL pour une commune
 async function fetchCommune(inseecom) {
   const { data } = await axios.get(`${OFGL_BASE}/ofgl-base-communes-consolidee/records`, {
-    params: {
-      where: `inseecom="${inseecom}"`,
-      limit: 5,
-      order_by: "exer desc",
-    },
+    params: { where: `inseecom="${inseecom}"`, limit: 5, order_by: "exer desc" },
     timeout: 15000,
   });
   return data.results || [];
 }
 
-// Fetch communes similaires (Rhône, 1500-3000 hab)
+// Fetch communes similaires selon config
 async function fetchSimilaires() {
+  const dep    = getConfig("commune_departement");
+  const popMin = getConfig("commune_pop_min");
+  const popMax = getConfig("commune_pop_max");
   const { data } = await axios.get(`${OFGL_BASE}/ofgl-base-communes-consolidee/records`, {
     params: {
-      where: `dep="69" and population>=1500 and population<=3500`,
+      where: `dep="${dep}" and population>=${popMin} and population<=${popMax}`,
       limit: 30,
       order_by: "exer desc, population asc",
     },
@@ -37,11 +35,12 @@ async function fetchSimilaires() {
 
 // GET /api/benchmark/compare
 router.get("/compare", async (req, res) => {
+  const insee = getConfig("commune_insee");
   try {
-    const [fleurieux, similaires] = await Promise.all([fetchCommune(INSEE_FLEURIEUX), fetchSimilaires()]);
+    const [fleurieux, similaires] = await Promise.all([fetchCommune(insee), fetchSimilaires()]);
 
     if (!fleurieux.length) {
-      return res.json({ error: "Aucune donnée OFGL pour Fleurieux. Les données 2024 peuvent ne pas encore être disponibles.", fleurieux: [], similaires: [] });
+      return res.json({ error: `Aucune donnée OFGL pour la commune (INSEE ${insee}). Les données peuvent ne pas encore être disponibles.`, fleurieux: [], similaires: [] });
     }
 
     // Regrouper similaires par commune, prendre l'année la plus récente
@@ -52,7 +51,7 @@ router.get("/compare", async (req, res) => {
         byCommune[key] = row;
       }
     }
-    const similairesLatest = Object.values(byCommune).filter(r => r.inseecom !== INSEE_FLEURIEUX);
+    const similairesLatest = Object.values(byCommune).filter(r => r.inseecom !== insee);
 
     // Moyennes similaires
     const calcMoy = (rows, field) => {
@@ -83,21 +82,23 @@ router.get("/compare", async (req, res) => {
 
 // GET /api/benchmark/analyse — IA commente le benchmark
 router.get("/analyse", async (req, res) => {
+  const insee = getConfig("commune_insee");
   try {
-    const [fleurieux, similaires] = await Promise.all([fetchCommune(INSEE_FLEURIEUX), fetchSimilaires()]);
+    const [fleurieux, similaires] = await Promise.all([fetchCommune(insee), fetchSimilaires()]);
     if (!fleurieux.length) return res.status(404).json({ error: "Pas de données" });
 
+    const client = getAIClient();
     const msg = await client.messages.create({
-      model: "claude-opus-4-5",
+      model: getAIModel(),
       max_tokens: 1200,
       messages: [{
         role: "user",
-        content: `Tu es analyste financier spécialisé en finances communales françaises. Analyse les données budgétaires de Fleurieux-sur-l'Arbresle (69082) en comparaison avec les communes similaires du Rhône (1500-3500 habitants).
+        content: `Tu es analyste financier spécialisé en finances communales françaises. Analyse les données budgétaires de ${communeLabel()} (INSEE ${insee}) en comparaison avec les communes similaires du département (population similaire).
 
-Données Fleurieux :
+Données commune :
 ${JSON.stringify(fleurieux[0], null, 2)}
 
-Communes comparables (${similaires.length} communes, Rhône, population similaire) — moyenne estimée.
+Communes comparables (${similaires.length} communes, population similaire) — moyenne estimée.
 
 Points à analyser :
 1. Niveau des dépenses de fonctionnement/habitant vs. moyenne
@@ -110,6 +111,7 @@ Réponse en français, structurée, accessible aux citoyens non experts. 3-4 par
       }],
     });
 
+    trackUsage("benchmark/analyse", msg.model, msg.usage);
     res.json({ analyse: msg.content[0].text, fleurieux: fleurieux[0], annee: fleurieux[0].exer });
   } catch (err) {
     res.status(502).json({ error: err.message });

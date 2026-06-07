@@ -1,21 +1,21 @@
 const express = require("express");
-const Anthropic = require("@anthropic-ai/sdk");
+const { getAIClient, getAIModel, getCommuneCtx } = require("../services/ai-client");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-const SYSTEM_PROMPT = `Tu es un expert en droit municipal français et contrôle de légalité des collectivités locales.
-Tu assistes l'opposition municipale de Fleurieux-sur-l'Arbresle (69210, ~2000 hab, Rhône).
-Conseil : Maire Aymeric GIRARDON (élu mars 2026), 5 adjoints, 13 conseillers.
-Réponds en français, avec précision juridique. Cite les articles CGCT et codes applicables.
-Structure avec des titres courts. Sois concret et actionnable.`;
 
 router.post("/", async (req, res) => {
   const { prompt, context, mode } = req.body;
   if (!prompt) return res.status(400).json({ error: "prompt requis" });
 
   try {
+    const c = getCommuneCtx();
+    const SYSTEM_PROMPT = `Tu es un expert en droit municipal français et contrôle de légalité des collectivités locales.
+Tu assistes l'opposition municipale de ${c.nom} (${c.cp}, ~${c.population} hab.).
+Conseil : Maire ${c.maire}, ${c.nb_conseillers} conseillers, quorum ${c.quorum}.
+Réponds en français, avec précision juridique. Cite les articles CGCT et codes applicables.
+Structure avec des titres courts. Sois concret et actionnable.`;
+
     let systemPrompt = SYSTEM_PROMPT;
     let userContent = context ? `${prompt}\n\n---\nContexte:\n${context}` : prompt;
 
@@ -28,13 +28,15 @@ Réponds UNIQUEMENT en JSON valide sans markdown.
 Format: {"results":[{"id":"CODE-ARTICLE","titre":"...","code":"CGCT|CODE_URBANISME|LOI","article":"L2121-10","date_vigueur":"YYYY-MM-DD","resume":"...","pertinence":"Haute|Moyenne|Basse","action_opposition":"...","url":"https://www.legifrance.gouv.fr/codes/article_lc/ARTICLE"}]}`;
     }
 
+    const client = getAIClient();
     const message = await client.messages.create({
-      model: "claude-sonnet-4-5",
+      model: getAIModel(),
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: "user", content: userContent }],
     });
 
+    trackUsage("ai", message.model, message.usage);
     res.json({ text: message.content[0]?.text || "" });
   } catch (err) {
     console.error("AI error:", err.message);

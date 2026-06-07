@@ -1,9 +1,9 @@
 const express = require("express");
 const { db } = require("../db");
-const Anthropic = require("@anthropic-ai/sdk");
+const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Date limite réponse = 1 mois après envoi (L2121-26 CGCT)
 function dateLimiteReponse(dateEnvoi) {
@@ -79,12 +79,13 @@ router.post("/generate", async (req, res) => {
 
   const pvs = db.prepare("SELECT date, objet, points, anomalies FROM pvs ORDER BY date DESC LIMIT 10").all();
 
+  const client = getAIClient();
   const msg = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: getAIModel(),
     max_tokens: 1024,
     messages: [{
       role: "user",
-      content: `Tu es conseiller municipal d'opposition à Fleurieux-sur-l'Arbresle (69210, ~2000 hab).
+      content: `Tu es conseiller municipal d'opposition à ${communeLabel()}.
 Rédige une question écrite formelle au Maire sur le sujet suivant : "${sujet}"
 ${contexte ? `Contexte : ${contexte}` : ""}
 
@@ -102,6 +103,7 @@ Retourne UNIQUEMENT ce JSON :
     }],
   });
 
+  trackUsage("questions/generate", msg.model, msg.usage);
   const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
   res.json(JSON.parse(raw));
 });
@@ -111,8 +113,9 @@ router.post("/:id/relance", async (req, res) => {
   const q = db.prepare("SELECT * FROM questions_ecrites WHERE id = ?").get(req.params.id);
   if (!q) return res.status(404).json({ error: "introuvable" });
 
+  const client = getAIClient();
   const msg = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: getAIModel(),
     max_tokens: 512,
     messages: [{
       role: "user",
@@ -127,6 +130,7 @@ Retourne le texte de la relance directement (pas de JSON).`,
     }],
   });
 
+  trackUsage("questions/relance", msg.model, msg.usage);
   const relanceText = msg.content[0].text;
   db.prepare("UPDATE questions_ecrites SET relances = relances + 1, statut = 'relance' WHERE id = ?").run(q.id);
   res.json({ texte: relanceText });

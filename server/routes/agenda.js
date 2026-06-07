@@ -1,16 +1,15 @@
 const express = require("express");
 const axios = require("axios");
 const cheerio = require("cheerio");
-const { db } = require("../db");
-const Anthropic = require("@anthropic-ai/sdk");
+const { db, getConfig } = require("../db");
+const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-const BASE_URL = "https://fleurieuxsurlarbresle.fr";
 
 // Tente de scraper l'ordre du jour depuis le site mairie
 async function scrapeOrdreJour() {
+  const BASE_URL = getConfig("commune_mairie_url");
   try {
     const { data: html } = await axios.get(`${BASE_URL}/fr/actualites`, {
       timeout: 10000,
@@ -61,12 +60,13 @@ router.get("/predict", async (req, res) => {
   const failles = db.prepare("SELECT titre, statut, date FROM failles WHERE statut != 'Résolu' ORDER BY date DESC LIMIT 5").all();
 
   try {
+    const client = getAIClient();
     const msg = await client.messages.create({
-      model: "claude-opus-4-5",
+      model: getAIModel(),
       max_tokens: 1500,
       messages: [{
         role: "user",
-        content: `Tu es conseiller municipal d'opposition à Fleurieux-sur-l'Arbresle (69210, ~2000 hab).
+        content: `Tu es conseiller municipal d'opposition à ${communeLabel()}.
 
 Historique des séances récentes :
 ${JSON.stringify(pvs, null, 2)}
@@ -98,6 +98,7 @@ Retourne UNIQUEMENT ce JSON :
       }],
     });
 
+    trackUsage("agenda/predict", msg.model, msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(raw);
     res.json(parsed);

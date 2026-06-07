@@ -1,9 +1,9 @@
 const express = require("express");
-const Anthropic = require("@anthropic-ai/sdk");
 const { db } = require("../db");
+const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // GET /api/analyses/patterns — détection de patterns temporels sur l'historique
 router.get("/patterns", async (req, res) => {
@@ -25,7 +25,8 @@ router.get("/patterns", async (req, res) => {
       return res.json({ patterns: [], summary: "Pas assez de données (minimum 3 séances)." });
     }
 
-    const prompt = `Tu es expert en droit des collectivités territoriales. Analyse l'historique 2020-2026 du conseil municipal de Fleurieux-sur-l'Arbresle (69210, ~2000 hab.) pour l'opposition municipale.
+    const client = getAIClient();
+    const prompt = `Tu es expert en droit des collectivités territoriales. Analyse l'historique du conseil municipal de ${communeLabel()} pour l'opposition municipale.
 
 PROCÈS-VERBAUX (${pvs.length} séances) :
 ${JSON.stringify(pvs.slice(-40))}
@@ -55,11 +56,12 @@ Identifie les PATTERNS SIGNIFICATIFS pour l'opposition. Retourne un JSON valide 
 }`;
 
     const msg = await client.messages.create({
-      model: "claude-opus-4-5",
+      model: getAIModel(),
       max_tokens: 2048,
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/patterns", msg.model, msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const result = JSON.parse(raw);
     res.json(result);
@@ -102,12 +104,14 @@ Retourne UNIQUEMENT ce JSON :
   ]
 }`;
 
+    const client = getAIClient();
     const msg = await client.messages.create({
-      model: "claude-opus-4-5",
+      model: getAIModel(),
       max_tokens: 1024,
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/budget", msg.model, msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const { lignes } = JSON.parse(raw);
 
@@ -131,7 +135,8 @@ router.get("/seance-prep", async (req, res) => {
     const failles = db.prepare("SELECT * FROM failles WHERE statut != 'Résolu'").all();
     const lois = db.prepare("SELECT * FROM lois").all();
 
-    const prompt = `Tu es conseiller juridique de l'opposition municipale de Fleurieux-sur-l'Arbresle (69210).
+    const client = getAIClient();
+    const prompt = `Tu es conseiller juridique de l'opposition municipale de ${communeLabel()}.
 Prépare la fiche de préparation pour la prochaine séance du conseil municipal${date ? ` du ${date}` : ""}.
 
 DERNIÈRES SÉANCES :
@@ -157,11 +162,12 @@ Retourne ce JSON valide uniquement :
 }`;
 
     const msg = await client.messages.create({
-      model: "claude-opus-4-5",
+      model: getAIModel(),
       max_tokens: 2048,
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/seance-prep", msg.model, msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     res.json(JSON.parse(raw));
   } catch (err) {
@@ -181,7 +187,8 @@ router.get("/rapport", async (req, res) => {
       try { return JSON.parse(p.anomalies || "[]").length > 0; } catch { return false; }
     });
 
-    const prompt = `Rédige un rapport d'opposition municipal pour les habitants de Fleurieux-sur-l'Arbresle.
+    const client = getAIClient();
+    const prompt = `Rédige un rapport d'opposition municipal pour les habitants de ${communeLabel()}.
 Ton : accessible, factuel, citoyen. Pas de jargon juridique inutile.
 
 DONNÉES :
@@ -215,11 +222,12 @@ Retourne ce JSON valide uniquement :
 }`;
 
     const msg = await client.messages.create({
-      model: "claude-opus-4-5",
+      model: getAIModel(),
       max_tokens: 2048,
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/rapport", msg.model, msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const rapport = JSON.parse(raw);
     rapport._meta = {

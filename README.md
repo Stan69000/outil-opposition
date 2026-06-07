@@ -34,6 +34,7 @@ Commune : **Fleurieux-sur-l'Arbresle** (69210) · ~2000 habitants · Ain / Métr
 - **Email alerts** — nodemailer, alerte sur nouvelles séances et délais urgents
 - **PWA** — installable sur mobile/tablette, notifications push sur nouvelles délibérations
 - **Thème dark/light** — persisté en localStorage
+- **Admin — coûts API** — tracking temps réel de chaque appel Anthropic (tokens in/out, coût USD) par route et par modèle, historique 30 jours
 
 ---
 
@@ -73,8 +74,13 @@ outil-opposition/
 │   │   ├── agenda.js        # Prédiction agenda IA
 │   │   ├── benchmark.js     # OFGL data.gouv.fr
 │   │   ├── push.js          # Web Push notifications
+│   │   ├── config.js        # Configuration commune via interface admin
 │   │   └── ai.js            # Endpoint IA générique
+│   │   └── admin.js         # Stats coûts API (/api/admin/usage)
 │   ├── services/
+│   │   ├── ai-client.js     # Client Anthropic centralisé (clé, modèle, contexte commune)
+│   │   ├── ai-tracker.js    # Tracking usage tokens + coût USD par appel IA
+│   │   ├── crypto.js        # Chiffrement AES-256 pour clés sensibles en DB
 │   │   ├── pdf-analyzer.js  # Extraction + analyse PDF
 │   │   ├── cron.js          # Synchro automatique lundi 8h
 │   │   └── mailer.js        # Alertes email

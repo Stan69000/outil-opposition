@@ -1,6 +1,7 @@
 const axios = require("axios");
 const pdfParse = require("pdf-parse");
 const Anthropic = require("@anthropic-ai/sdk");
+const { trackUsage } = require("./ai-tracker");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -57,6 +58,7 @@ Pour les anomalies : vérifie délais légaux, procédure, compétence, publicat
     messages: [{ role: "user", content: prompt }],
   });
 
+  trackUsage("pdf/analyze", message.model, message.usage);
   const raw = message.content[0].text.trim().replace(/```json|```/g, "").trim();
   return JSON.parse(raw);
 }

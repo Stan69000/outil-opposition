@@ -2426,20 +2426,470 @@ function AgendaPrep() {
   );
 }
 
-// ── TABS ───────────────────────────────────────────────────────────────────────
-const TABS = [
-  { id:"dashboard",      label:"Tableau de bord", icon:"⬡" },
-  { id:"seance-live",    label:"Séance live",      icon:"●" },
-  { id:"pv",             label:"Procès-verbaux",   icon:"≡" },
-  { id:"questions",      label:"Questions & CADA", icon:"?" },
-  { id:"agenda",         label:"Agenda",           icon:"+" },
-  { id:"failles",        label:"Failles",          icon:"!" },
-  { id:"jurisprudence",  label:"Jurisprudence",    icon:"=" },
-  { id:"legifrance",     label:"Légifrance",       icon:"§" },
-  { id:"analyses",       label:"Analyses IA",      icon:"◈" },
-  { id:"scraper",        label:"Sync Mairie",      icon:"↻" },
-  { id:"historique",     label:"Historique",       icon:"⌛" },
+// ── TEST BTN ──────────────────────────────────────────────────────────────────
+function TestBtn({ label, testFn }) {
+  const t = useT();
+  const [state, setState] = useState("idle"); // idle | loading | ok | error
+  const [detail, setDetail] = useState("");
+
+  const run = async () => {
+    setState("loading"); setDetail("");
+    try {
+      const r = await testFn();
+      if (r.ok) {
+        setState("ok");
+        setDetail(r.message || r.latency_ms ? `${r.latency_ms}ms` : "OK");
+      } else {
+        setState("error");
+        setDetail(r.error || "Échec");
+      }
+    } catch (e) {
+      setState("error");
+      setDetail(e.message);
+    }
+    setTimeout(() => { setState("idle"); setDetail(""); }, 6000);
+  };
+
+  const colors = { ok: t.success, error: t.danger, loading: t.textMuted, idle: t.textSec };
+  const color  = colors[state];
+
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
+      <Btn onClick={run} disabled={state === "loading"} variant="ghost" size="sm">
+        {state === "loading" ? "Test…" : label}
+      </Btn>
+      {detail && (
+        <span style={{ fontSize:"12px", color, fontWeight:500 }}>
+          {state === "ok" ? "✓ " : state === "error" ? "✗ " : ""}{detail}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const AI_MODELS = {
+  anthropic: [
+    { value:"claude-opus-4-5",    label:"Claude Opus (meilleur)" },
+    { value:"claude-sonnet-4-5",  label:"Claude Sonnet (rapide)" },
+    { value:"claude-haiku-4-5",   label:"Claude Haiku (économique)" },
+  ],
+  openai: [
+    { value:"gpt-4o",      label:"GPT-4o" },
+    { value:"gpt-4o-mini", label:"GPT-4o mini" },
+  ],
+  mistral: [
+    { value:"mistral-large-latest", label:"Mistral Large" },
+    { value:"mistral-small-latest", label:"Mistral Small" },
+  ],
+};
+
+function ConfigSection({ title, children }) {
+  const t = useT();
+  return (
+    <div style={{ marginBottom:"28px" }}>
+      <p style={{ color:t.textMuted, fontSize:"10px", fontWeight:700, textTransform:"uppercase",
+        letterSpacing:"0.1em", marginBottom:"12px" }}>{title}</p>
+      <Card hover={false} style={{ padding:"20px", display:"flex", flexDirection:"column", gap:"14px" }}>
+        {children}
+      </Card>
+    </div>
+  );
+}
+
+function ConfigField({ label, hint, children }) {
+  const t = useT();
+  return (
+    <div>
+      <label style={{ display:"block", color:t.textSec, fontSize:"12px", fontWeight:600, marginBottom:"5px" }}>
+        {label}
+      </label>
+      {children}
+      {hint && <p style={{ color:t.textMuted, fontSize:"11px", marginTop:"4px" }}>{hint}</p>}
+    </div>
+  );
+}
+
+function Configuration() {
+  const t = useT();
+  const [cfg, setCfg] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [newApiKey, setNewApiKey] = useState("");
+  const [testResult, setTestResult] = useState(null);
+
+  useEffect(() => {
+    api.config.get().then(data => {
+      setCfg(data);
+      setForm(data);
+    }).catch(() => {});
+  }, []);
+
+  const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
+  const handleSave = async () => {
+    setSaving(true);
+    const payload = { ...form };
+    if (newApiKey.trim()) payload.ai_api_key = newApiKey.trim();
+    delete payload.ai_api_key_masked;
+    try {
+      await api.config.save(payload);
+      setSaved(true);
+      setNewApiKey("");
+      const fresh = await api.config.get();
+      setCfg(fresh); setForm(fresh);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      alert("Erreur sauvegarde : " + e.message);
+    }
+    setSaving(false);
+  };
+
+  const handleTestPush = async () => {
+    try {
+      await api.push.test();
+      setTestResult("Notification envoyée !");
+    } catch (e) {
+      setTestResult("Erreur : " + e.message);
+    }
+    setTimeout(() => setTestResult(null), 4000);
+  };
+
+  if (!cfg) return <Spinner label="Chargement configuration…" />;
+
+  const models = AI_MODELS[form.ai_provider] || AI_MODELS.anthropic;
+  const otherProviders = Object.keys(AI_MODELS).filter(p => p !== "anthropic");
+
+  return (
+    <div style={{ maxWidth:"680px" }}>
+      <SectionTitle title="Configuration" subtitle="Paramètres de l'outil — commune, IA, alertes" />
+
+      {/* COMMUNE */}
+      <ConfigSection title="Commune">
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px" }}>
+          <ConfigField label="Nom de la commune">
+            <Input value={form.commune_nom||""} onChange={e=>set("commune_nom",e.target.value)} placeholder="Fleurieux-sur-l'Arbresle" />
+          </ConfigField>
+          <ConfigField label="Code postal">
+            <Input value={form.commune_cp||""} onChange={e=>set("commune_cp",e.target.value)} placeholder="69210" />
+          </ConfigField>
+          <ConfigField label="Code INSEE">
+            <Input value={form.commune_insee||""} onChange={e=>set("commune_insee",e.target.value)} placeholder="69082" />
+          </ConfigField>
+          <ConfigField label="Population (habitants)">
+            <Input value={form.commune_population||""} onChange={e=>set("commune_population",e.target.value)} placeholder="2000" type="number" />
+          </ConfigField>
+          <ConfigField label="Département">
+            <Input value={form.commune_departement||""} onChange={e=>set("commune_departement",e.target.value)} placeholder="69" />
+          </ConfigField>
+          <ConfigField label="Nb. conseillers municipaux">
+            <Input value={form.commune_nb_conseillers||""} onChange={e=>set("commune_nb_conseillers",e.target.value)} placeholder="15" type="number" />
+          </ConfigField>
+          <ConfigField label="Quorum (majorité absolue)" hint="Nombre minimum pour délibérer valablement">
+            <Input value={form.commune_quorum||""} onChange={e=>set("commune_quorum",e.target.value)} placeholder="8" type="number" />
+          </ConfigField>
+          <ConfigField label="Maire">
+            <Input value={form.commune_maire||""} onChange={e=>set("commune_maire",e.target.value)} placeholder="M. Prénom NOM" />
+          </ConfigField>
+        </div>
+        <ConfigField label="URL site mairie" hint="Base pour le scraping des actualités">
+          <Input value={form.commune_mairie_url||""} onChange={e=>set("commune_mairie_url",e.target.value)} placeholder="https://mairie.fr" />
+        </ConfigField>
+        <ConfigField label="URL page délibérations" hint="Page scraped pour l'import automatique des PVs">
+          <Input value={form.commune_deliberations_url||""} onChange={e=>set("commune_deliberations_url",e.target.value)} placeholder="https://mairie.fr/deliberations" />
+        </ConfigField>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px" }}>
+          <ConfigField label="Pop. min. benchmark OFGL">
+            <Input value={form.commune_pop_min||""} onChange={e=>set("commune_pop_min",e.target.value)} placeholder="1500" type="number" />
+          </ConfigField>
+          <ConfigField label="Pop. max. benchmark OFGL">
+            <Input value={form.commune_pop_max||""} onChange={e=>set("commune_pop_max",e.target.value)} placeholder="3500" type="number" />
+          </ConfigField>
+        </div>
+      </ConfigSection>
+
+      {/* IA */}
+      <ConfigSection title="Intelligence Artificielle">
+        <ConfigField label="Provider IA">
+          <Select value={form.ai_provider||"anthropic"} onChange={e=>{ set("ai_provider",e.target.value); set("ai_model", AI_MODELS[e.target.value]?.[0]?.value || ""); }}>
+            <option value="anthropic">Anthropic (Claude) — recommandé</option>
+            {otherProviders.map(p => (
+              <option key={p} value={p}>{p.charAt(0).toUpperCase()+p.slice(1)} — bientôt disponible</option>
+            ))}
+          </Select>
+        </ConfigField>
+        <ConfigField label="Modèle" hint={form.ai_provider!=="anthropic" ? "Intégration en cours — utilise Claude pour l'instant" : undefined}>
+          <Select value={form.ai_model||""} onChange={e=>set("ai_model",e.target.value)} disabled={form.ai_provider!=="anthropic"}>
+            {models.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </Select>
+        </ConfigField>
+        <ConfigField label="Clé API" hint={cfg.ai_api_key_masked ? `Clé actuelle : ${cfg.ai_api_key_masked} — laisser vide pour conserver` : "Aucune clé enregistrée"}>
+          <Input
+            type="password"
+            value={newApiKey}
+            onChange={e=>setNewApiKey(e.target.value)}
+            placeholder={cfg.ai_api_key_masked ? "Nouvelle clé (laisser vide = conserver)" : "sk-ant-api03-…"}
+          />
+        </ConfigField>
+        <TestBtn label="Tester la clé IA" testFn={api.config.testAI} />
+      </ConfigSection>
+
+      {/* LÉGIFRANCE */}
+      <ConfigSection title="API Légifrance (PISTE)">
+        <ConfigField label="Client ID" hint="beta.piste.gouv.fr → votre application">
+          <Input value={form.piste_client_id||""} onChange={e=>set("piste_client_id",e.target.value)} placeholder="f186dbc6-…" />
+        </ConfigField>
+        <ConfigField label="Client Secret">
+          <Input type="password" value={form.piste_client_secret||""} onChange={e=>set("piste_client_secret",e.target.value)} placeholder="••••" />
+        </ConfigField>
+        <TestBtn label="Tester OAuth PISTE" testFn={api.config.testLF} />
+      </ConfigSection>
+
+      {/* ALERTES */}
+      <ConfigSection title="Alertes & synchronisation">
+        <ConfigField label="Email d'alerte" hint="Reçoit les notifications de nouvelles délibérations">
+          <Input type="email" value={form.alert_email||""} onChange={e=>set("alert_email",e.target.value)} placeholder="conseiller@email.fr" />
+        </ConfigField>
+        <ConfigField label="Seuil alerte recours (jours)" hint="Badge rouge dans l'interface quand le délai de recours est inférieur à ce seuil">
+          <Input type="number" value={form.alert_recours_seuil||"10"} onChange={e=>set("alert_recours_seuil",e.target.value)} placeholder="10" />
+        </ConfigField>
+        <TestBtn label="Tester l'envoi email" testFn={api.config.testSMTP} />
+        <ConfigField label="Synchronisation automatique (cron lundi 8h)">
+          <div style={{ display:"flex", gap:"8px" }}>
+            {["1","0"].map(v => (
+              <button key={v} onClick={()=>set("sync_enabled",v)} style={{
+                flex:1, padding:"8px", borderRadius:"6px", cursor:"pointer",
+                fontFamily:"inherit", fontSize:"13px", fontWeight:form.sync_enabled===v?600:400,
+                background:form.sync_enabled===v?(v==="1"?t.successBg:t.dangerBg):t.surfaceAlt,
+                border:`1px solid ${form.sync_enabled===v?(v==="1"?t.success:t.danger):t.border}`,
+                color:form.sync_enabled===v?(v==="1"?t.success:t.danger):t.textSec,
+              }}>
+                {v==="1" ? "Activée" : "Désactivée"}
+              </button>
+            ))}
+          </div>
+        </ConfigField>
+      </ConfigSection>
+
+      {/* OUTILS */}
+      <ConfigSection title="Outils">
+        <div style={{ display:"flex", gap:"10px", flexWrap:"wrap" }}>
+          <Btn variant="ghost" onClick={handleTestPush}>Test notification push</Btn>
+          <a href="/api/config" target="_blank" style={{ textDecoration:"none" }}>
+            <Btn variant="ghost">Voir config brute (JSON)</Btn>
+          </a>
+        </div>
+        {testResult && (
+          <p style={{ color:t.success, fontSize:"13px" }}>{testResult}</p>
+        )}
+      </ConfigSection>
+
+      {/* SAVE */}
+      <div style={{ display:"flex", gap:"10px", alignItems:"center" }}>
+        <Btn onClick={handleSave} disabled={saving} variant="primary">
+          {saving ? "Enregistrement…" : "Enregistrer la configuration"}
+        </Btn>
+        {saved && <span style={{ color:t.success, fontSize:"13px", fontWeight:600 }}>Sauvegardé</span>}
+      </div>
+
+      <p style={{ color:t.textMuted, fontSize:"11px", marginTop:"16px", lineHeight:"1.6" }}>
+        Les modifications sont appliquées immédiatement côté serveur sans redémarrage.<br/>
+        La clé API n'est jamais retournée par l'API — seuls les 4 derniers caractères sont affichés.
+      </p>
+    </div>
+  );
+}
+
+// ── ADMIN ──────────────────────────────────────────────────────────────────────
+function AdminPanel() {
+  const t = useContext(ThemeCtx);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/admin/usage")
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setErr(e.message); setLoading(false); });
+  }, []);
+
+  if (loading) return <Spinner label="Chargement…" />;
+  if (err) return <p style={{ color:t.danger, fontSize:"13px" }}>Erreur : {err}</p>;
+
+  const fmt = n => (n ?? 0).toLocaleString("fr-FR");
+  const fmtUsd = n => `$${(n ?? 0).toFixed(4)}`;
+  const fmtUsdSmall = n => `$${(n ?? 0).toFixed(6)}`;
+  const { total, byModel, byRoute, byDay, recent } = data;
+
+  return (
+    <div style={{ maxWidth:"900px", margin:"0 auto" }}>
+      <SectionTitle title="Coûts API Anthropic" subtitle="Usage et dépenses des clés API — tracking en temps réel" />
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:"12px", marginBottom:"24px" }}>
+        {[
+          { label:"Appels total",     value: fmt(total.calls) },
+          { label:"Tokens entrée",    value: fmt(total.input) },
+          { label:"Tokens sortie",    value: fmt(total.output) },
+          { label:"Coût total (USD)", value: fmtUsd(total.cost), highlight:true },
+        ].map(s => (
+          <Card key={s.label} style={{ textAlign:"center" }}>
+            <div style={{ fontSize: s.highlight ? "22px" : "20px", fontWeight:700,
+              color: s.highlight ? t.danger : t.primary, fontVariantNumeric:"tabular-nums" }}>
+              {s.value}
+            </div>
+            <div style={{ fontSize:"11px", color:t.textMuted, marginTop:"4px" }}>{s.label}</div>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ marginBottom:"20px" }}>
+        <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>Par modèle</h3>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+          <thead><tr style={{ color:t.textMuted, textAlign:"left" }}>
+            {["Modèle","Appels","Tokens in","Tokens out","Coût USD"].map(h => (
+              <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {byModel.map(r => (
+              <tr key={r.model} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                <td style={{ padding:"6px 8px", color:t.text, fontFamily:"monospace", fontSize:"11px" }}>{r.model}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.calls)}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.input)}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.output)}</td>
+                <td style={{ padding:"6px 8px", color:t.danger, fontWeight:600 }}>{fmtUsd(r.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card style={{ marginBottom:"20px" }}>
+        <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>Par fonctionnalité</h3>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+          <thead><tr style={{ color:t.textMuted, textAlign:"left" }}>
+            {["Route","Appels","Coût USD"].map(h => (
+              <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {byRoute.map(r => (
+              <tr key={r.route} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                <td style={{ padding:"6px 8px", color:t.text, fontFamily:"monospace" }}>{r.route}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.calls)}</td>
+                <td style={{ padding:"6px 8px", color:t.danger, fontWeight:600 }}>{fmtUsd(r.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      {byDay.length > 0 && (
+        <Card style={{ marginBottom:"20px" }}>
+          <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>Historique (30 j.)</h3>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+            <thead><tr style={{ color:t.textMuted, textAlign:"left" }}>
+              {["Jour","Appels","Coût USD"].map(h => (
+                <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {byDay.map(r => (
+                <tr key={r.day} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                  <td style={{ padding:"6px 8px", color:t.text }}>{r.day}</td>
+                  <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.calls)}</td>
+                  <td style={{ padding:"6px 8px", color:t.danger, fontWeight:600 }}>{fmtUsd(r.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      <Card>
+        <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>50 derniers appels</h3>
+        {recent.length === 0 ? (
+          <p style={{ color:t.textMuted, fontSize:"12px", textAlign:"center", padding:"20px" }}>
+            Aucun appel enregistré — le tracking démarre maintenant.
+          </p>
+        ) : (
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"11px" }}>
+            <thead><tr style={{ color:t.textMuted, textAlign:"left" }}>
+              {["Date","Route","Modèle","In","Out","Coût"].map(h => (
+                <th key={h} style={{ padding:"4px 6px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {recent.map(r => (
+                <tr key={r.id} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                  <td style={{ padding:"4px 6px", color:t.textMuted, whiteSpace:"nowrap" }}>{r.called_at?.slice(0,16)}</td>
+                  <td style={{ padding:"4px 6px", color:t.text, fontFamily:"monospace" }}>{r.route}</td>
+                  <td style={{ padding:"4px 6px", color:t.textMuted, fontFamily:"monospace" }}>{r.model?.replace("claude-","")}</td>
+                  <td style={{ padding:"4px 6px", color:t.textMuted }}>{fmt(r.input_tokens)}</td>
+                  <td style={{ padding:"4px 6px", color:t.textMuted }}>{fmt(r.output_tokens)}</td>
+                  <td style={{ padding:"4px 6px", color:t.danger }}>{fmtUsdSmall(r.cost_usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ── NAV GROUPS ────────────────────────────────────────────────────────────────
+const NAV_GROUPS = [
+  {
+    label: "Séances",
+    items: [
+      { id:"dashboard",    label:"Tableau de bord", icon:"⬡" },
+      { id:"seance-live",  label:"Séance live",     icon:"●" },
+      { id:"pv",           label:"Procès-verbaux",  icon:"≡" },
+      { id:"historique",   label:"Historique",      icon:"⌛" },
+    ],
+  },
+  {
+    label: "Action juridique",
+    items: [
+      { id:"failles",      label:"Failles",          icon:"!" },
+      { id:"questions",    label:"Questions & CADA", icon:"?" },
+      { id:"jurisprudence",label:"Jurisprudence",    icon:"=" },
+      { id:"legifrance",   label:"Légifrance",       icon:"§" },
+    ],
+  },
+  {
+    label: "Analyses",
+    items: [
+      { id:"analyses",     label:"Analyses IA",     icon:"◈" },
+      { id:"agenda",       label:"Agenda",          icon:"+" },
+    ],
+  },
+  {
+    label: "Données",
+    items: [
+      { id:"scraper",      label:"Sync Mairie",     icon:"↻" },
+      { id:"config",       label:"Configuration",   icon:"⚙" },
+      { id:"admin",        label:"Admin",           icon:"$" },
+    ],
+  },
 ];
+
+// Items visibles dans la barre bottom mobile (les plus utilisés)
+const BOTTOM_NAV = ["dashboard","seance-live","pv","failles"];
+
+// ── HOOK WINDOW SIZE ──────────────────────────────────────────────────────────
+function useWindowWidth() {
+  const [width, setWidth] = useState(() => typeof window !== "undefined" ? window.innerWidth : 1200);
+  useEffect(() => {
+    const handler = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return width;
+}
 
 // ── APP ────────────────────────────────────────────────────────────────────────
 export default function App() {
@@ -2449,9 +2899,13 @@ export default function App() {
   const [failles, setFailles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     try { return localStorage.getItem("theme") !== "light"; } catch { return true; }
   });
+
+  const width = useWindowWidth();
+  const isDesktop = width >= 960;
 
   const theme = darkMode ? DARK : LIGHT;
 
@@ -2461,6 +2915,8 @@ export default function App() {
       return !d;
     });
   };
+
+  const navigate = (id) => { setTab(id); setDrawerOpen(false); };
 
   const loadAll = useCallback(async () => {
     setLoading(true); setLoadError(null);
@@ -2481,7 +2937,7 @@ export default function App() {
       navigator.serviceWorker.ready.then(async sw => {
         try {
           const existing = await sw.pushManager.getSubscription();
-          if (existing) return; // déjà abonné
+          if (existing) return;
           const sub = await sw.pushManager.subscribe({
             userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(publicKey),
@@ -2516,14 +2972,171 @@ export default function App() {
       case "analyses":      return <Analyses lois={lois} pvs={pvs} failles={failles} />;
       case "scraper":       return <SyncMairie onImport={imp=>setPvs(prev=>[...prev,...imp])} />;
       case "historique":    return <Historique pvs={pvs} failles={failles} />;
+      case "config":        return <Configuration />;
+      case "admin":         return <AdminPanel />;
       default: return null;
     }
   };
 
+  // Badge d'alerte compact
+  const alertBadges = (
+    <>
+      {urgentCount > 0 && (
+        <div onClick={()=>navigate("pv")} style={{ background:theme.dangerBg,
+          border:`1px solid ${theme.danger}55`, borderRadius:"6px",
+          padding:"3px 8px", cursor:"pointer", flexShrink:0 }}>
+          <span style={{ color:theme.danger, fontSize:"11px", fontWeight:600 }}>
+            ! {urgentCount} recours
+          </span>
+        </div>
+      )}
+      {alertCount > 0 && (
+        <div onClick={()=>navigate("failles")} style={{ background:theme.warningBg,
+          border:`1px solid ${theme.warning}55`, borderRadius:"6px",
+          padding:"3px 8px", cursor:"pointer", flexShrink:0 }}>
+          <span style={{ color:theme.warning, fontSize:"11px", fontWeight:600 }}>
+            ! {alertCount} faille{alertCount>1?"s":""}
+          </span>
+        </div>
+      )}
+    </>
+  );
+
+  // Logo + titre
+  const logo = (
+    <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+      <div style={{ width:"30px", height:"30px", background:theme.primaryBg,
+        border:`1.5px solid ${theme.primary}`, borderRadius:"7px",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        color:theme.primary, fontSize:"15px", fontWeight:700, flexShrink:0 }}>⬡</div>
+      <div>
+        <div style={{ color:theme.text, fontSize:"13px", fontWeight:700, lineHeight:1.2, whiteSpace:"nowrap" }}>
+          Opposition Municipale
+        </div>
+        <div style={{ color:theme.textMuted, fontSize:"10px", letterSpacing:"0.06em", textTransform:"uppercase" }}>
+          Fleurieux · 69210
+        </div>
+      </div>
+    </div>
+  );
+
+  // Bouton thème
+  const themeBtn = (
+    <button onClick={toggleTheme} style={{
+      background:theme.surfaceAlt, border:`1px solid ${theme.border}`,
+      color:theme.textSec, width:"32px", height:"32px", borderRadius:"7px",
+      cursor:"pointer", fontSize:"15px", display:"flex",
+      alignItems:"center", justifyContent:"center", flexShrink:0,
+    }}>
+      {darkMode ? "☀" : "☾"}
+    </button>
+  );
+
+  // Sidebar nav item
+  const SideNavItem = ({ item, indent }) => {
+    const active = tab === item.id;
+    const hasBadge = (item.id === "failles" && alertCount > 0) ||
+                     (item.id === "pv" && urgentCount > 0);
+    const badgeNum = item.id === "failles" ? alertCount : urgentCount;
+    return (
+      <button onClick={()=>navigate(item.id)} style={{
+        width:"100%", background:active ? theme.primaryBg : "transparent",
+        border:`1px solid ${active ? theme.primary+"44" : "transparent"}`,
+        borderRadius:"7px", padding:"8px 10px",
+        display:"flex", alignItems:"center", gap:"9px",
+        cursor:"pointer", textAlign:"left", fontFamily:"inherit",
+        transition:"background 0.12s",
+      }}>
+        <span style={{ fontSize:"14px", width:"18px", textAlign:"center",
+          color:active ? theme.primary : theme.textMuted, flexShrink:0 }}>{item.icon}</span>
+        <span style={{ fontSize:"13px", fontWeight:active?600:400,
+          color:active ? theme.text : theme.textSec, flex:1 }}>{item.label}</span>
+        {hasBadge && (
+          <span style={{ background:item.id==="pv"?theme.danger:theme.warning,
+            color:"#fff", fontSize:"10px", fontWeight:700,
+            borderRadius:"10px", padding:"1px 6px", flexShrink:0 }}>{badgeNum}</span>
+        )}
+      </button>
+    );
+  };
+
+  // Sidebar content (partagée desktop + drawer mobile)
+  const sidebarContent = (
+    <div style={{ display:"flex", flexDirection:"column", gap:"4px", padding:"8px 12px", flex:1, overflowY:"auto" }}>
+      {NAV_GROUPS.map(group => (
+        <div key={group.label} style={{ marginBottom:"6px" }}>
+          <p style={{ color:theme.textMuted, fontSize:"10px", fontWeight:700,
+            textTransform:"uppercase", letterSpacing:"0.08em",
+            padding:"8px 10px 4px", margin:0 }}>{group.label}</p>
+          {group.items.map(item => <SideNavItem key={item.id} item={item} />)}
+        </div>
+      ))}
+    </div>
+  );
+
+  // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────────
+  if (isDesktop) {
+    return (
+      <ThemeCtx.Provider value={theme}>
+        <div style={{ display:"flex", minHeight:"100vh", background:theme.bg, color:theme.text,
+          fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }}>
+          <style>{`
+            * { box-sizing:border-box; margin:0; padding:0; }
+            ::-webkit-scrollbar { width:4px; }
+            ::-webkit-scrollbar-track { background:transparent; }
+            ::-webkit-scrollbar-thumb { background:${theme.border}; border-radius:3px; }
+            input::placeholder, textarea::placeholder { color:${theme.textMuted}; }
+            input, textarea, button, select { outline:none; }
+            @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+          `}</style>
+
+          {/* Sidebar */}
+          <aside style={{ width:"220px", minWidth:"220px", height:"100vh", position:"sticky", top:0,
+            background:theme.nav, borderRight:`1px solid ${theme.navBorder}`,
+            display:"flex", flexDirection:"column", overflow:"hidden" }}>
+            {/* Logo */}
+            <div style={{ padding:"16px 14px 12px", borderBottom:`1px solid ${theme.navBorder}` }}>
+              {logo}
+            </div>
+            {/* Nav groups */}
+            {sidebarContent}
+            {/* Footer */}
+            <div style={{ padding:"10px 12px 14px", borderTop:`1px solid ${theme.navBorder}`,
+              display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span style={{ color:theme.textMuted, fontSize:"10px" }}>v2.0</span>
+              {themeBtn}
+            </div>
+          </aside>
+
+          {/* Main */}
+          <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+            {/* Top bar */}
+            {(alertCount > 0 || urgentCount > 0) && (
+              <div style={{ background:theme.nav, borderBottom:`1px solid ${theme.navBorder}`,
+                padding:"8px 24px", display:"flex", gap:"8px", alignItems:"center" }}>
+                {alertBadges}
+              </div>
+            )}
+            {/* Content */}
+            <div style={{ flex:1, padding:"24px", maxWidth:"1100px", width:"100%" }}>
+              {renderContent()}
+            </div>
+          </div>
+        </div>
+      </ThemeCtx.Provider>
+    );
+  }
+
+  // ── MOBILE / TABLET LAYOUT ──────────────────────────────────────────────────
+  // Items bottom nav
+  const allItems = NAV_GROUPS.flatMap(g => g.items);
+  const bottomItems = BOTTOM_NAV.map(id => allItems.find(i => i.id === id)).filter(Boolean);
+
   return (
     <ThemeCtx.Provider value={theme}>
       <div style={{ minHeight:"100vh", background:theme.bg, color:theme.text,
-        fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }}>
+        fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
+        paddingBottom:"60px" }}>
         <style>{`
           * { box-sizing:border-box; margin:0; padding:0; }
           ::-webkit-scrollbar { width:4px; }
@@ -2532,81 +3145,104 @@ export default function App() {
           input::placeholder, textarea::placeholder { color:${theme.textMuted}; }
           input, textarea, button, select { outline:none; }
           @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+          @keyframes slideIn { from { transform:translateX(-100%); } to { transform:translateX(0); } }
         `}</style>
 
-        <div style={{ background:theme.nav, borderBottom:`1px solid ${theme.navBorder}`,
-          padding:"0 24px", position:"sticky", top:0, zIndex:50,
+        {/* Top header mobile */}
+        <div style={{ position:"sticky", top:0, zIndex:100,
+          background:theme.nav, borderBottom:`1px solid ${theme.navBorder}`,
+          padding:"0 16px", height:"52px",
+          display:"flex", alignItems:"center", justifyContent:"space-between",
           boxShadow:`0 1px 4px rgba(0,0,0,${theme.mode==="dark"?0.3:0.06})` }}>
-          <div style={{ maxWidth:"1200px", margin:"0 auto",
-            display:"flex", justifyContent:"space-between", alignItems:"center", height:"56px" }}>
+          {logo}
+          <div style={{ display:"flex", gap:"6px", alignItems:"center" }}>
+            {alertBadges}
+            {themeBtn}
+            {/* Burger */}
+            <button onClick={()=>setDrawerOpen(o=>!o)} style={{
+              background:theme.surfaceAlt, border:`1px solid ${theme.border}`,
+              color:theme.textSec, width:"32px", height:"32px", borderRadius:"7px",
+              cursor:"pointer", fontSize:"18px", display:"flex",
+              alignItems:"center", justifyContent:"center" }}>
+              {drawerOpen ? "✕" : "☰"}
+            </button>
+          </div>
+        </div>
 
-            <div style={{ display:"flex", alignItems:"center", gap:"12px" }}>
-              <div style={{ width:"32px", height:"32px", background:theme.primaryBg,
-                border:`1.5px solid ${theme.primary}`, borderRadius:"8px",
-                display:"flex", alignItems:"center", justifyContent:"center",
-                color:theme.primary, fontSize:"16px", fontWeight:700 }}>⬡</div>
-              <div>
-                <div style={{ color:theme.text, fontSize:"14px", fontWeight:700, lineHeight:1.2 }}>
-                  Opposition Municipale
-                </div>
-                <div style={{ color:theme.textMuted, fontSize:"10px", letterSpacing:"0.08em", textTransform:"uppercase" }}>
-                  Fleurieux-sur-l'Arbresle · 69210
-                </div>
+        {/* Drawer overlay */}
+        {drawerOpen && (
+          <div style={{ position:"fixed", inset:0, zIndex:200 }}
+               onClick={()=>setDrawerOpen(false)}>
+            <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.5)" }} />
+            <div onClick={e=>e.stopPropagation()} style={{
+              position:"absolute", top:0, left:0, bottom:0, width:"260px",
+              background:theme.nav, borderRight:`1px solid ${theme.navBorder}`,
+              display:"flex", flexDirection:"column",
+              animation:"slideIn 0.2s ease-out",
+            }}>
+              <div style={{ padding:"14px 14px 12px", borderBottom:`1px solid ${theme.navBorder}`,
+                display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                {logo}
+                <button onClick={()=>setDrawerOpen(false)} style={{
+                  background:"transparent", border:"none", color:theme.textMuted,
+                  fontSize:"20px", cursor:"pointer", padding:"4px", lineHeight:1 }}>✕</button>
               </div>
-            </div>
-
-            <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
-              {urgentCount > 0 && (
-                <div style={{ background:theme.dangerBg, border:`1px solid ${theme.danger}55`,
-                  borderRadius:"6px", padding:"4px 10px", cursor:"pointer" }}
-                  onClick={()=>setTab("pv")}>
-                  <span style={{ color:theme.danger, fontSize:"12px", fontWeight:600 }}>
-                    ! {urgentCount} recours urgent{urgentCount>1?"s":""}
-                  </span>
-                </div>
-              )}
-              {alertCount > 0 && (
-                <div style={{ background:theme.warningBg, border:`1px solid ${theme.warning}55`,
-                  borderRadius:"6px", padding:"4px 10px", cursor:"pointer" }}
-                  onClick={()=>setTab("failles")}>
-                  <span style={{ color:theme.warning, fontSize:"12px", fontWeight:600 }}>
-                    ! {alertCount} faille{alertCount>1?"s":""}
-                  </span>
-                </div>
-              )}
-              <button onClick={toggleTheme} style={{
-                background:theme.surfaceAlt, border:`1px solid ${theme.border}`,
-                color:theme.textSec, width:"34px", height:"34px", borderRadius:"8px",
-                cursor:"pointer", fontSize:"16px", display:"flex",
-                alignItems:"center", justifyContent:"center",
-              }}>
-                {darkMode ? "☀" : "☾"}
-              </button>
+              {sidebarContent}
             </div>
           </div>
-        </div>
+        )}
 
-        <div style={{ background:theme.nav, borderBottom:`1px solid ${theme.navBorder}`, padding:"0 24px" }}>
-          <div style={{ maxWidth:"1200px", margin:"0 auto", display:"flex", overflowX:"auto",
-            WebkitOverflowScrolling:"touch" }}>
-            {TABS.map(t=>(
-              <button key={t.id} onClick={()=>setTab(t.id)} style={{
-                background:"none", border:"none",
-                borderBottom:`2px solid ${tab===t.id?theme.primary:"transparent"}`,
-                color:tab===t.id?theme.text:theme.textMuted,
-                padding:"12px 14px", cursor:"pointer", fontSize:"13px",
-                fontWeight:tab===t.id?600:400, fontFamily:"inherit",
-                display:"flex", alignItems:"center", gap:"6px", whiteSpace:"nowrap",
-                transition:"color 0.15s", marginBottom:"-1px",
-              }}>
-                {t.icon} {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ maxWidth:"1200px", margin:"0 auto", padding:"24px" }}>
+        {/* Content */}
+        <div style={{ padding:"16px" }}>
           {renderContent()}
+        </div>
+
+        {/* Bottom nav */}
+        <div style={{ position:"fixed", bottom:0, left:0, right:0, zIndex:90,
+          background:theme.nav, borderTop:`1px solid ${theme.navBorder}`,
+          display:"flex", height:"60px",
+          boxShadow:`0 -1px 8px rgba(0,0,0,${theme.mode==="dark"?0.3:0.06})` }}>
+          {bottomItems.map(item => {
+            const active = tab === item.id;
+            const hasBadge = (item.id === "failles" && alertCount > 0) ||
+                             (item.id === "pv" && urgentCount > 0);
+            const badgeNum = item.id === "failles" ? alertCount : urgentCount;
+            return (
+              <button key={item.id} onClick={()=>navigate(item.id)} style={{
+                flex:1, background:"transparent", border:"none",
+                display:"flex", flexDirection:"column", alignItems:"center",
+                justifyContent:"center", gap:"3px", cursor:"pointer",
+                fontFamily:"inherit", position:"relative",
+                borderTop:`2px solid ${active ? theme.primary : "transparent"}`,
+              }}>
+                <span style={{ fontSize:"18px", lineHeight:1,
+                  color:active ? theme.primary : theme.textMuted }}>{item.icon}</span>
+                <span style={{ fontSize:"9px", fontWeight:active?600:400,
+                  color:active ? theme.primary : theme.textMuted, letterSpacing:"0.02em" }}>
+                  {item.label.split(" ")[0]}
+                </span>
+                {hasBadge && (
+                  <span style={{ position:"absolute", top:"6px", right:"calc(50% - 14px)",
+                    background:item.id==="pv"?theme.danger:theme.warning,
+                    color:"#fff", fontSize:"9px", fontWeight:700,
+                    borderRadius:"8px", padding:"1px 4px", minWidth:"14px", textAlign:"center" }}>
+                    {badgeNum}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {/* Menu button */}
+          <button onClick={()=>setDrawerOpen(o=>!o)} style={{
+            flex:1, background:"transparent", border:"none",
+            display:"flex", flexDirection:"column", alignItems:"center",
+            justifyContent:"center", gap:"3px", cursor:"pointer",
+            fontFamily:"inherit",
+            borderTop:`2px solid transparent`,
+          }}>
+            <span style={{ fontSize:"18px", lineHeight:1, color:theme.textMuted }}>☰</span>
+            <span style={{ fontSize:"9px", color:theme.textMuted }}>Menu</span>
+          </button>
         </div>
       </div>
     </ThemeCtx.Provider>

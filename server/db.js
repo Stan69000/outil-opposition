@@ -1,5 +1,6 @@
 const { DatabaseSync } = require("node:sqlite");
 const path = require("path");
+const { encrypt, decrypt, isSensitive } = require("./services/crypto");
 
 const db = new DatabaseSync(path.join(__dirname, "fleurieux.db"));
 
@@ -169,6 +170,78 @@ db.prepare(`
   )
 `).run();
 
+// ── AI USAGE LOG ──────────────────────────────────────────────────────────────
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS ai_usage_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    called_at TEXT DEFAULT (datetime('now')),
+    route TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0
+  )
+`).run();
+
+// ── CONFIG TABLE ──────────────────────────────────────────────────────────────
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT DEFAULT (datetime('now'))
+  )
+`).run();
+
+const CONFIG_DEFAULTS = {
+  commune_nom:              "Fleurieux-sur-l'Arbresle",
+  commune_cp:               "69210",
+  commune_insee:            "69082",
+  commune_population:       "2000",
+  commune_departement:      "69",
+  commune_pop_min:          "1500",
+  commune_pop_max:          "3500",
+  commune_nb_conseillers:   "15",
+  commune_quorum:           "8",
+  commune_maire:            "M. Aymeric GIRARDON",
+  commune_mairie_url:       "https://fleurieuxsurlarbresle.fr",
+  commune_deliberations_url:"https://fleurieuxsurlarbresle.fr/fr/rb/2187928/deliberations-prises",
+  ai_provider:              "anthropic",
+  ai_model:                 "claude-opus-4-5",
+  ai_api_key:               "",
+  alert_email:              "",
+  alert_recours_seuil:      "10",
+  sync_enabled:             "1",
+  piste_client_id:          "",
+  piste_client_secret:      "",
+};
+
+const _insertDefault = db.prepare("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)");
+for (const [k, v] of Object.entries(CONFIG_DEFAULTS)) _insertDefault.run(k, v);
+
+function getConfig(key) {
+  const row = db.prepare("SELECT value FROM config WHERE key = ?").get(key);
+  const raw = (row && row.value !== "") ? row.value : (CONFIG_DEFAULTS[key] ?? "");
+  return isSensitive(key) ? decrypt(raw) : raw;
+}
+
+function getAllConfig() {
+  const rows = db.prepare("SELECT key, value FROM config").all();
+  const result = { ...CONFIG_DEFAULTS };
+  for (const r of rows) {
+    if (r.value !== "") {
+      result[r.key] = isSensitive(r.key) ? decrypt(r.value) : r.value;
+    }
+  }
+  return result;
+}
+
+function setConfig(key, value) {
+  const stored = isSensitive(key) ? encrypt(value) : value;
+  db.prepare(
+    "INSERT OR REPLACE INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))"
+  ).run(key, stored);
+}
+
 function runInTransaction(fn) {
   db.prepare("BEGIN").run();
   try {
@@ -267,4 +340,4 @@ function parsePv(row) {
   };
 }
 
-module.exports = { db, parsePv };
+module.exports = { db, parsePv, getConfig, getAllConfig, setConfig, CONFIG_DEFAULTS };

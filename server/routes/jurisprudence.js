@@ -1,10 +1,10 @@
 const express = require("express");
 const axios = require("axios");
 const cheerio = require("cheerio");
-const Anthropic = require("@anthropic-ai/sdk");
+const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const BASE_LF = "https://www.legifrance.gouv.fr";
 
@@ -58,20 +58,28 @@ router.get("/search", async (req, res) => {
       ? `${q} commune municipale Rhône Lyon`
       : `${q} commune collectivité territoriale`;
 
-    let results = await scrapeJurisprudence(queryEnrichie);
+    let results = [];
+    try {
+      results = await scrapeJurisprudence(queryEnrichie);
+    } catch (_) {
+      // Légifrance bloque le scraping → fallback IA systématique
+    }
 
     // Si scraping échoue ou résultats vides → fallback IA
     if (results.length === 0) {
+      const client = getAIClient();
       const msg = await client.messages.create({
-        model: "claude-opus-4-5",
+        model: getAIModel(),
         max_tokens: 1024,
         messages: [{
           role: "user",
-          content: `Cite 3-4 décisions de jurisprudence administrative française réelles et pertinentes pour : "${q}" dans le contexte d'une commune de 2000 habitants. Focus sur TA Lyon, CAA Lyon, CE si possible.
-Retourne UNIQUEMENT ce JSON :
-{"results":[{"titre":"Conseil d'État, X décembre XXXX, n°XXXXXX","url":"https://www.legifrance.gouv.fr/ceta/id/CETATEXT...","date":"YYYY-MM-DD","juridiction":"Conseil d'État","extrait":"résumé de l'apport de la décision en 1-2 phrases","pertinence":"explication de la pertinence pour une opposition municipale"}]}`,
+          content: `Tu es expert en droit administratif français. Cite 3 décisions de jurisprudence administrative réelles et pertinentes pour : "${q}", dans le contexte de ${communeLabel()}. Privilégie TA Lyon, CAA Lyon, Conseil d'État.
+
+IMPORTANT : réponds UNIQUEMENT avec le JSON brut ci-dessous, sans texte avant ni après, sans balises markdown :
+{"results":[{"titre":"TA Lyon, 12 mars 2019, n°1800123","url":"https://www.legifrance.gouv.fr/ceta/id/CETATEXT000038123456","date":"2019-03-12","juridiction":"Tribunal Administratif de Lyon","extrait":"La délibération a été annulée faute de convocation régulière des conseillers.","pertinence":"Applicable si le délai de convocation CGCT L2121-10 n'est pas respecté."}]}`,
         }],
       });
+      trackUsage("jurisprudence/search", msg.model, msg.usage);
       const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(raw);
       results = (parsed.results || []).map(r => ({ ...r, source: "ia-fallback" }));

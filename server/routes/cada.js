@@ -1,9 +1,9 @@
 const express = require("express");
 const { db } = require("../db");
-const Anthropic = require("@anthropic-ai/sdk");
+const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Délai légal CADA : 1 mois pour réponse (loi 1978, art. 17)
 function dateLimiteCada(dateDemande) {
@@ -70,15 +70,16 @@ router.post("/generate", async (req, res) => {
   const { document_demande, motif = "" } = req.body;
   if (!document_demande) return res.status(400).json({ error: "document_demande requis" });
 
+  const client = getAIClient();
   const msg = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: getAIModel(),
     max_tokens: 800,
     messages: [{
       role: "user",
       content: `Rédige une lettre de demande d'accès à un document administratif (loi du 17/07/1978, désormais code des relations entre le public et l'administration, CRPA art. L311-1 et suivants).
 
-Expéditeur : Conseiller municipal d'opposition, commune de Fleurieux-sur-l'Arbresle (69210)
-Destinataire : Mairie de Fleurieux-sur-l'Arbresle / CADA si recours
+Expéditeur : Conseiller municipal d'opposition, commune de ${communeLabel()}
+Destinataire : Mairie / CADA si recours
 Document demandé : ${document_demande}
 Motif / contexte : ${motif || "exercice du mandat de conseiller municipal d'opposition"}
 
@@ -92,6 +93,7 @@ Retourne le texte de la lettre directement (pas de JSON, pas de markdown).`,
     }],
   });
 
+  trackUsage("cada/generate", msg.model, msg.usage);
   res.json({ texte: msg.content[0].text, document_demande, date_demande: new Date().toISOString().slice(0, 10) });
 });
 
