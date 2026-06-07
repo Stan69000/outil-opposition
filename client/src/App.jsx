@@ -1751,41 +1751,520 @@ function Analyses({ lois, pvs, failles }) {
 }
 
 // ── HISTORIQUE ─────────────────────────────────────────────────────────────────
-function Historique({ pvs, failles }) {
+// ── BARRE CSS ─────────────────────────────────────────────────────────────────
+function CSSBar({ value, max, color, height=8 }) {
   const t = useT();
-  const events = [
-    ...pvs.map(p=>({ date:p.date, type:"PV", label:p.objet, statut:p.statut, color:t.purple, auto:p.source==="auto" })),
-    ...failles.map(f=>({ date:f.date, type:"Faille", label:f.titre, statut:f.statut, color:graviteColor(t,f.gravite).border })),
-  ].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const pct = max>0 ? Math.min(Math.round((value/max)*100),100) : 0;
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+      <div style={{ flex:1, height, background:t.border, borderRadius:"4px", overflow:"hidden" }}>
+        <div style={{ height:"100%", width:`${pct}%`, background:color, borderRadius:"4px", transition:"width 0.4s" }} />
+      </div>
+      <span style={{ color:t.textMuted, fontSize:"11px", minWidth:"28px", textAlign:"right" }}>{value}</span>
+    </div>
+  );
+}
+
+function StatCard({ title, children }) {
+  const t = useT();
+  return (
+    <Card style={{ marginBottom:"12px" }}>
+      <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+        letterSpacing:"0.06em", margin:"0 0 14px 0" }}>{title}</p>
+      {children}
+    </Card>
+  );
+}
+
+// ── CHRONOLOGIE TAB ───────────────────────────────────────────────────────────
+function ChronologieTab({ pvs, failles, questions, cadas, courriers, engagements, journal }) {
+  const t = useT();
+  const ALL_TYPES = ["PV","Faille","Question","CADA","Courrier","Engagement","Terrain"];
+  const [filtre, setFiltre] = useState(new Set(ALL_TYPES));
+
+  const TYPE_COLOR = {
+    PV:"#a78bfa", Faille:t.danger, Question:t.primary,
+    CADA:t.warning, Courrier:t.textSec, Engagement:t.success, Terrain:"#8b5cf6",
+  };
+
+  const allEvents = [
+    ...pvs.map(p=>({ date:p.date, type:"PV", label:p.objet, statut:p.statut, sub:p.source==="auto"?"Auto":null })),
+    ...failles.map(f=>({ date:f.date, type:"Faille", label:f.titre, statut:f.statut, sub:f.gravite })),
+    ...questions.filter(q=>q.date_envoi).map(q=>({ date:q.date_envoi, type:"Question", label:q.objet, statut:q.statut })),
+    ...cadas.map(c=>({ date:c.date_demande, type:"CADA", label:c.document_demande, statut:c.statut })),
+    ...courriers.filter(c=>c.date_envoi).map(c=>({ date:c.date_envoi, type:"Courrier", label:c.objet, statut:c.statut })),
+    ...engagements.filter(e=>e.date_prise).map(e=>({ date:e.date_prise, type:"Engagement", label:e.titre, statut:e.statut })),
+    ...journal.map(j=>({ date:j.date, type:"Terrain", label:j.lieu?`${j.lieu} — ${(j.contenu||"").slice(0,60)}`:(j.contenu||"").slice(0,80), statut:j.type })),
+  ].filter(e=>e.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  const filtered = allEvents.filter(e=>filtre.has(e.type));
+  const byYear = {};
+  for (const e of filtered) {
+    const y = e.date.slice(0,4);
+    if (!byYear[y]) byYear[y] = [];
+    byYear[y].push(e);
+  }
+  const years = Object.keys(byYear).sort((a,b)=>b-a);
+  const curYear = String(new Date().getFullYear());
+  const [openYears, setOpenYears] = useState(()=>new Set([curYear, String(Number(curYear)-1)]));
+  const toggleYear = y => setOpenYears(prev=>{ const s=new Set(prev); s.has(y)?s.delete(y):s.add(y); return s; });
+  const toggleFilter = type => setFiltre(prev=>{ const s=new Set(prev); s.has(type)?s.delete(type):s.add(type); return s; });
 
   return (
     <div>
-      <SectionTitle sub="Chronologie de toutes les séances et irrégularités">
-        Historique
-      </SectionTitle>
-      <div style={{ position:"relative", paddingLeft:"24px" }}>
-        <div style={{ position:"absolute", left:"9px", top:0, bottom:0, width:"2px", background:t.border }} />
-        {events.map((e,i)=>(
-          <div key={i} style={{ display:"flex", marginBottom:"8px", position:"relative" }}>
-            <div style={{ position:"absolute", left:"-18px", width:"10px", height:"10px",
-              borderRadius:"50%", background:e.color, border:`2px solid ${t.bg}`, marginTop:"14px" }} />
-            <Card style={{ flex:1, padding:"10px 14px" }} hover={false}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:"6px" }}>
-                <div style={{ display:"flex", gap:"6px", alignItems:"center", flexWrap:"wrap" }}>
-                  <Badge label={e.type} color={e.color} />
-                  {e.auto && <Badge label="Auto" color={t.purple} />}
-                  <span style={{ color:t.text, fontSize:"13px" }}>{e.label}</span>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:"6px", marginBottom:"14px", alignItems:"center" }}>
+        {ALL_TYPES.map(type=>(
+          <button key={type} onClick={()=>toggleFilter(type)} style={{
+            padding:"3px 10px", borderRadius:"20px", fontSize:"11px", fontWeight:600,
+            cursor:"pointer", border:`1px solid ${TYPE_COLOR[type]}`,
+            background:filtre.has(type)?TYPE_COLOR[type]+"22":"transparent",
+            color:filtre.has(type)?TYPE_COLOR[type]:t.textMuted, fontFamily:"inherit",
+          }}>
+            {type} <span style={{ opacity:0.7 }}>{allEvents.filter(e=>e.type===type).length}</span>
+          </button>
+        ))}
+        <span style={{ color:t.textMuted, fontSize:"11px", marginLeft:"4px" }}>
+          {filtered.length} événement{filtered.length>1?"s":""}
+        </span>
+      </div>
+      {years.length===0 && <EmptyState icon="=" text="Aucun événement pour les filtres sélectionnés." />}
+      {years.map(year=>(
+        <div key={year} style={{ marginBottom:"6px" }}>
+          <button onClick={()=>toggleYear(year)} style={{
+            width:"100%", display:"flex", alignItems:"center", gap:"10px",
+            background:"transparent", border:"none", cursor:"pointer", padding:"6px 0", fontFamily:"inherit",
+          }}>
+            <span style={{ color:t.text, fontSize:"14px", fontWeight:700 }}>{year}</span>
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>{byYear[year].length} év.</span>
+            <div style={{ flex:1, height:"1px", background:t.border }} />
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>{openYears.has(year)?"▲":"▼"}</span>
+          </button>
+          {openYears.has(year) && (
+            <div style={{ position:"relative", paddingLeft:"24px", marginTop:"4px" }}>
+              <div style={{ position:"absolute", left:"9px", top:0, bottom:0, width:"2px", background:t.border }} />
+              {byYear[year].map((e,i)=>(
+                <div key={i} style={{ display:"flex", marginBottom:"6px", position:"relative" }}>
+                  <div style={{ position:"absolute", left:"-18px", width:"10px", height:"10px",
+                    borderRadius:"50%", background:TYPE_COLOR[e.type], border:`2px solid ${t.bg}`, marginTop:"11px" }} />
+                  <Card style={{ flex:1, padding:"8px 12px" }} hover={false}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:"6px" }}>
+                      <div style={{ display:"flex", gap:"6px", alignItems:"center", flexWrap:"wrap" }}>
+                        <Badge label={e.type} color={TYPE_COLOR[e.type]} />
+                        {e.sub && <Badge label={e.sub} color={e.type==="Faille"?graviteColor(t,e.sub).border:t.purple} />}
+                        <span style={{ color:t.text, fontSize:"12px" }}>{e.label}</span>
+                      </div>
+                      <div style={{ display:"flex", gap:"6px", alignItems:"center" }}>
+                        {e.statut && <Badge label={e.statut} color={statutColor(t,e.statut)} />}
+                        <span style={{ color:t.textMuted, fontSize:"11px" }}>{e.date}</span>
+                      </div>
+                    </div>
+                  </Card>
                 </div>
-                <div style={{ display:"flex", gap:"6px", alignItems:"center" }}>
-                  <Badge label={e.statut} color={statutColor(t,e.statut)} />
-                  <span style={{ color:t.textMuted, fontSize:"12px" }}>{e.date}</span>
-                </div>
-              </div>
-            </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── STATISTIQUES TAB ──────────────────────────────────────────────────────────
+function StatistiquesTab({ pvs, failles, questions, cadas, courriers, engagements }) {
+  const t = useT();
+  const today = new Date().toISOString().slice(0,10);
+
+  const totalPour   = pvs.reduce((s,p)=>s+(p.votes_pour||0),0);
+  const totalContre = pvs.reduce((s,p)=>s+(p.votes_contre||0),0);
+  const totalAbst   = pvs.reduce((s,p)=>s+(p.votes_abstention||0),0);
+  const totalVotes  = totalPour+totalContre+totalAbst;
+  const seancesContestees = pvs.filter(p=>(p.votes_contre||0)+(p.votes_abstention||0)>0);
+  const seancesAlertes    = pvs.filter(p=>p.statut==="Alerte");
+  const seancesUnanimite  = pvs.filter(p=>(p.votes_contre||0)===0&&(p.votes_abstention||0)===0&&(p.votes_pour||0)>0);
+  const tauxContestation  = pvs.length>0?Math.round((seancesContestees.length/pvs.length)*100):0;
+
+  const typesFailles={}, gravitesFailles={}, cgctCounts={};
+  for (const f of failles) {
+    typesFailles[f.type||"Autre"]=(typesFailles[f.type||"Autre"]||0)+1;
+    gravitesFailles[f.gravite||"—"]=(gravitesFailles[f.gravite||"—"]||0)+1;
+    if (f.cgct) cgctCounts[f.cgct]=(cgctCounts[f.cgct]||0)+1;
+  }
+  const maxType    = Math.max(...Object.values(typesFailles),1);
+  const maxGravite = Math.max(...Object.values(gravitesFailles),1);
+  const faillesResolues = failles.filter(f=>f.statut==="Résolu").length;
+  const topCgct = Object.entries(cgctCounts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  const qRepondues = questions.filter(q=>q.reponse||q.statut==="Répondue");
+  const tauxRepQ   = questions.length>0?Math.round(qRepondues.length/questions.length*100):0;
+  const cadaObt    = cadas.filter(c=>["Obtenu","Communication totale"].includes(c.statut));
+  const tauxCada   = cadas.length>0?Math.round(cadaObt.length/cadas.length*100):0;
+  const corrEnv    = courriers.filter(c=>c.statut!=="brouillon");
+  const corrRep    = courriers.filter(c=>c.date_reponse);
+  const tauxCorr   = corrEnv.length>0?Math.round(corrRep.length/corrEnv.length*100):0;
+
+  const engTenus      = engagements.filter(e=>e.statut==="Tenu").length;
+  const engPromis     = engagements.filter(e=>e.statut==="Promis").length;
+  const engAbandonnes = engagements.filter(e=>e.statut==="Abandonné").length;
+  const engDepasses   = engagements.filter(e=>e.echeance&&e.echeance<today&&e.statut!=="Tenu");
+
+  const Tuile = ({label,value,color}) => (
+    <div style={{ textAlign:"center", padding:"12px 8px", background:t.surfaceAlt,
+      borderRadius:"8px", borderTop:`3px solid ${color}` }}>
+      <div style={{ fontSize:"22px", fontWeight:700, color, lineHeight:1 }}>{value}</div>
+      <div style={{ fontSize:"10px", color:t.textMuted, marginTop:"4px" }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <StatCard title="Votes au conseil">
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"8px", marginBottom:"14px" }}>
+          <Tuile label="Pour (total)" value={totalPour} color={t.success} />
+          <Tuile label="Contre (total)" value={totalContre} color={t.danger} />
+          <Tuile label="Abstentions" value={totalAbst} color={t.warning} />
+        </div>
+        {[
+          { label:"Pour", value:totalPour, color:t.success },
+          { label:"Contre", value:totalContre, color:t.danger },
+          { label:"Abstention", value:totalAbst, color:t.warning },
+        ].map(row=>(
+          <div key={row.label} style={{ marginBottom:"8px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"3px" }}>
+              <span style={{ fontSize:"12px", color:t.text }}>{row.label}</span>
+              <span style={{ fontSize:"11px", color:t.textMuted }}>
+                {totalVotes>0?Math.round(row.value/totalVotes*100):0}%
+              </span>
+            </div>
+            <CSSBar value={row.value} max={totalVotes||1} color={row.color} />
           </div>
         ))}
-        {events.length===0 && <EmptyState icon="=" text="Aucun événement à afficher." />}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"8px", marginTop:"12px" }}>
+          <Tuile label="Unanimes" value={seancesUnanimite.length} color={t.success} />
+          <Tuile label="Contestées" value={seancesContestees.length} color={t.warning} />
+          <Tuile label="En alerte" value={seancesAlertes.length} color={t.danger} />
+        </div>
+        <p style={{ color:t.textMuted, fontSize:"11px", margin:"10px 0 0 0" }}>
+          Taux de contestation : <strong style={{ color:tauxContestation>50?t.danger:t.text }}>{tauxContestation}%</strong> des séances
+        </p>
+      </StatCard>
+
+      <StatCard title="Anomalies & failles">
+        <div style={{ display:"flex", gap:"14px", marginBottom:"14px", flexWrap:"wrap" }}>
+          <div style={{ flex:1, minWidth:"130px" }}>
+            <p style={{ fontSize:"11px", color:t.textMuted, margin:"0 0 8px 0", fontWeight:600 }}>Par type</p>
+            {Object.entries(typesFailles).sort((a,b)=>b[1]-a[1]).map(([type,count])=>(
+              <div key={type} style={{ marginBottom:"6px" }}>
+                <div style={{ fontSize:"11px", color:t.text, marginBottom:"3px" }}>{type}</div>
+                <CSSBar value={count} max={maxType} color={t.danger} height={6} />
+              </div>
+            ))}
+          </div>
+          <div style={{ flex:1, minWidth:"130px" }}>
+            <p style={{ fontSize:"11px", color:t.textMuted, margin:"0 0 8px 0", fontWeight:600 }}>Par gravité</p>
+            {Object.entries(gravitesFailles).sort((a,b)=>b[1]-a[1]).map(([grav,count])=>{
+              const c = grav==="Haute"?t.danger:grav==="Moyenne"?t.warning:t.success;
+              return (
+                <div key={grav} style={{ marginBottom:"6px" }}>
+                  <div style={{ fontSize:"11px", color:t.text, marginBottom:"3px" }}>{grav}</div>
+                  <CSSBar value={count} max={maxGravite} color={c} height={6} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{ marginBottom:"10px" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"4px" }}>
+            <span style={{ fontSize:"12px", color:t.text }}>Taux de résolution</span>
+            <span style={{ fontSize:"11px", color:t.textMuted }}>
+              {failles.length>0?Math.round(faillesResolues/failles.length*100):0}%
+            </span>
+          </div>
+          <CSSBar value={faillesResolues} max={failles.length||1} color={t.success} />
+        </div>
+        {topCgct.length>0 && (
+          <div>
+            <p style={{ fontSize:"11px", color:t.textMuted, margin:"0 0 6px 0", fontWeight:600 }}>Articles CGCT les plus cités</p>
+            {topCgct.map(([art,count])=>(
+              <div key={art} style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+                padding:"4px 8px", marginBottom:"3px", background:t.surfaceAlt, borderRadius:"4px" }}>
+                <span style={{ color:t.primary, fontSize:"12px", fontFamily:"monospace" }}>{art}</span>
+                <Badge label={`${count}×`} color={t.danger} />
+              </div>
+            ))}
+          </div>
+        )}
+      </StatCard>
+
+      <StatCard title="Efficacité opposition">
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"8px" }}>
+          {[
+            { label:"Questions écrites", total:questions.length, ok:qRepondues.length, taux:tauxRepQ, color:t.success },
+            { label:"CADA", total:cadas.length, ok:cadaObt.length, taux:tauxCada, color:t.primary },
+            { label:"Courriers", total:corrEnv.length, ok:corrRep.length, taux:tauxCorr, color:"#a78bfa" },
+          ].map(item=>(
+            <div key={item.label} style={{ background:t.surfaceAlt, borderRadius:"8px", padding:"12px" }}>
+              <p style={{ fontSize:"10px", color:t.textMuted, margin:"0 0 6px 0", fontWeight:600 }}>{item.label}</p>
+              <div style={{ fontSize:"22px", fontWeight:700, color:item.color, lineHeight:1 }}>{item.taux}%</div>
+              <div style={{ fontSize:"10px", color:t.textMuted, margin:"4px 0 6px 0" }}>taux de réponse</div>
+              <CSSBar value={item.ok} max={item.total||1} color={item.color} height={5} />
+              <div style={{ fontSize:"10px", color:t.textMuted, marginTop:"4px" }}>
+                {item.ok}/{item.total} réponse{item.ok>1?"s":""}
+              </div>
+            </div>
+          ))}
+        </div>
+      </StatCard>
+
+      <StatCard title="Engagements du conseil">
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"8px", marginBottom:"10px" }}>
+          <Tuile label="Total" value={engagements.length} color={t.primary} />
+          <Tuile label="Tenus" value={engTenus} color={t.success} />
+          <Tuile label="Promis" value={engPromis} color={t.warning} />
+          <Tuile label="Abandonnés" value={engAbandonnes} color={t.danger} />
+        </div>
+        {engDepasses.length>0 && (
+          <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}44`, borderRadius:"6px", padding:"10px 12px" }}>
+            <p style={{ color:t.danger, fontSize:"11px", fontWeight:700, margin:"0 0 6px 0" }}>
+              {engDepasses.length} engagement{engDepasses.length>1?"s":""} en dépassement d'échéance
+            </p>
+            {engDepasses.slice(0,5).map((e,i)=>(
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:"11px",
+                borderBottom:i<engDepasses.length-1?`1px solid ${t.danger}22`:"none", padding:"3px 0" }}>
+                <span style={{ color:t.textSec }}>{e.titre}</span>
+                <span style={{ color:t.danger }}>{e.echeance}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {engDepasses.length===0&&engagements.length>0 && (
+          <p style={{ color:t.success, fontSize:"12px", margin:"6px 0 0 0" }}>Aucun engagement en dépassement.</p>
+        )}
+      </StatCard>
+    </div>
+  );
+}
+
+// ── BUDGET TAB ────────────────────────────────────────────────────────────────
+function BudgetTab() {
+  const t = useT();
+  const [budget, setBudget] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{
+    api.analyses.budget()
+      .then(d=>{ setBudget(d); setLoading(false); })
+      .catch(()=>setLoading(false));
+  },[]);
+
+  if (loading) return <Spinner label="Chargement données budgétaires…" />;
+
+  const lignes = budget?.budgets||[];
+  if (lignes.length===0) {
+    return (
+      <Card style={{ textAlign:"center", padding:"40px 20px" }}>
+        <p style={{ color:t.textMuted, fontSize:"13px", marginBottom:"8px" }}>Aucune donnée budgétaire disponible.</p>
+        <p style={{ color:t.textMuted, fontSize:"12px" }}>
+          Analysez un PDF budgétaire depuis <strong>Analyses &gt; Budget</strong> pour alimenter cette vue.
+        </p>
+      </Card>
+    );
+  }
+
+  const annees = [...new Set(lignes.map(l=>l.annee))].sort((a,b)=>a-b);
+  const parAnnee = {};
+  for (const l of lignes) {
+    if (!parAnnee[l.annee]) parAnnee[l.annee]={fonctionnement:0,investissement:0};
+    parAnnee[l.annee][l.nature||"fonctionnement"]=(parAnnee[l.annee][l.nature||"fonctionnement"]||0)+l.montant;
+  }
+  const fmtEur = n => n>=1e6?`${(n/1e6).toFixed(2)}M€`:n>=1000?`${Math.round(n/1000)}k€`:`${n}€`;
+  const lastAnnee = annees[annees.length-1];
+  const postes = lignes.filter(l=>l.annee===lastAnnee).sort((a,b)=>b.montant-a.montant);
+  const maxPoste = Math.max(...postes.map(p=>p.montant),1);
+
+  return (
+    <div>
+      <Card style={{ marginBottom:"12px" }}>
+        <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+          letterSpacing:"0.06em", margin:"0 0 14px 0" }}>Évolution budgétaire</p>
+        {annees.map(annee=>{
+          const fonct  = parAnnee[annee]?.fonctionnement||0;
+          const invest = parAnnee[annee]?.investissement||0;
+          const total  = fonct+invest;
+          const pctF   = total>0?(fonct/total)*100:0;
+          const pctI   = total>0?(invest/total)*100:0;
+          return (
+            <div key={annee} style={{ marginBottom:"12px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"4px" }}>
+                <span style={{ fontSize:"12px", fontWeight:600, color:t.text }}>{annee}</span>
+                <span style={{ fontSize:"11px", color:t.textMuted }}>{fmtEur(total)}</span>
+              </div>
+              <div style={{ height:"10px", background:t.border, borderRadius:"5px", overflow:"hidden", display:"flex" }}>
+                <div style={{ width:`${pctF}%`, background:t.primary, transition:"width 0.4s" }} />
+                <div style={{ width:`${pctI}%`, background:t.success, transition:"width 0.4s" }} />
+              </div>
+              <div style={{ display:"flex", gap:"12px", marginTop:"3px" }}>
+                <span style={{ fontSize:"10px", color:t.primary }}>Fonct. {fmtEur(fonct)}</span>
+                <span style={{ fontSize:"10px", color:t.success }}>Invest. {fmtEur(invest)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+      {postes.length>0 && (
+        <Card>
+          <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+            letterSpacing:"0.06em", margin:"0 0 12px 0" }}>Postes {lastAnnee}</p>
+          {postes.slice(0,10).map((p,i)=>(
+            <div key={i} style={{ marginBottom:"8px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"3px" }}>
+                <span style={{ fontSize:"11px", color:t.text }}>{p.poste}</span>
+                <span style={{ fontSize:"11px", color:t.textMuted }}>{fmtEur(p.montant)}</span>
+              </div>
+              <CSSBar value={p.montant} max={maxPoste} color={p.nature==="investissement"?t.success:t.primary} height={5} />
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── COÛTS IA TAB ──────────────────────────────────────────────────────────────
+function CoutsIATab() {
+  const t = useT();
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr]         = useState(null);
+
+  useEffect(()=>{
+    fetch("/api/admin/usage")
+      .then(r=>r.json())
+      .then(d=>{ setData(d); setLoading(false); })
+      .catch(e=>{ setErr(e.message); setLoading(false); });
+  },[]);
+
+  if (loading) return <Spinner label="Chargement…" />;
+  if (err) return <p style={{ color:t.danger, fontSize:"13px" }}>Erreur : {err}</p>;
+
+  const fmt    = n => (n??0).toLocaleString("fr-FR");
+  const fmtU   = n => `$${(n??0).toFixed(4)}`;
+  const fmtUSm = n => `$${(n??0).toFixed(6)}`;
+  const { total, byRoute, byDay, recent } = data;
+
+  const projMensuel = byDay?.length>0
+    ? (byDay.reduce((s,d)=>s+d.cost,0)/byDay.length)*30
+    : null;
+
+  return (
+    <div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))", gap:"10px", marginBottom:"14px" }}>
+        {[
+          { label:"Appels total",   value:fmt(total.calls) },
+          { label:"Tokens entrée",  value:fmt(total.input) },
+          { label:"Tokens sortie",  value:fmt(total.output) },
+          { label:"Coût total USD", value:fmtU(total.cost), hi:true },
+        ].map(s=>(
+          <Card key={s.label} style={{ textAlign:"center" }} hover={false}>
+            <div style={{ fontSize:s.hi?"22px":"18px", fontWeight:700,
+              color:s.hi?t.danger:t.primary, fontVariantNumeric:"tabular-nums" }}>{s.value}</div>
+            <div style={{ fontSize:"10px", color:t.textMuted, marginTop:"4px" }}>{s.label}</div>
+          </Card>
+        ))}
       </div>
+      {projMensuel!==null && (
+        <div style={{ background:projMensuel>5?t.dangerBg:t.successBg,
+          border:`1px solid ${projMensuel>5?t.danger:t.success}44`,
+          borderRadius:"8px", padding:"10px 14px", marginBottom:"12px" }}>
+          <span style={{ fontSize:"12px", color:t.text }}>
+            Projection mensuelle : <strong style={{ color:projMensuel>5?t.danger:t.success }}>
+              ${projMensuel.toFixed(3)}
+            </strong>
+            <span style={{ color:t.textMuted, marginLeft:"8px", fontSize:"11px" }}>
+              sur {byDay.length} j. d'activité
+            </span>
+          </span>
+        </div>
+      )}
+      <Card style={{ marginBottom:"12px" }}>
+        <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+          letterSpacing:"0.06em", margin:"0 0 10px 0" }}>Par fonctionnalité</p>
+        {byRoute.map(r=>(
+          <div key={r.route} style={{ marginBottom:"8px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"3px" }}>
+              <span style={{ fontSize:"11px", color:t.text, fontFamily:"monospace" }}>{r.route}</span>
+              <span style={{ fontSize:"11px", color:t.danger, fontWeight:600 }}>{fmtU(r.cost)}</span>
+            </div>
+            <CSSBar value={Math.round(r.cost*10000)} max={Math.round((byRoute[0]?.cost||1)*10000)} color={t.danger} height={5} />
+          </div>
+        ))}
+      </Card>
+      <Card>
+        <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+          letterSpacing:"0.06em", margin:"0 0 10px 0" }}>50 derniers appels</p>
+        {recent.length===0
+          ? <p style={{ color:t.textMuted, fontSize:"12px", textAlign:"center", padding:"20px" }}>Aucun appel enregistré.</p>
+          : (
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"11px" }}>
+              <thead><tr style={{ color:t.textMuted, textAlign:"left" }}>
+                {["Date","Route","Modèle","In","Out","Coût"].map(h=>(
+                  <th key={h} style={{ padding:"4px 6px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {recent.map(r=>(
+                  <tr key={r.id} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                    <td style={{ padding:"4px 6px", color:t.textMuted, whiteSpace:"nowrap" }}>{r.called_at?.slice(0,16)}</td>
+                    <td style={{ padding:"4px 6px", color:t.text, fontFamily:"monospace" }}>{r.route}</td>
+                    <td style={{ padding:"4px 6px", color:t.textMuted, fontFamily:"monospace" }}>{r.model?.replace("claude-","")}</td>
+                    <td style={{ padding:"4px 6px", color:t.textMuted }}>{fmt(r.input_tokens)}</td>
+                    <td style={{ padding:"4px 6px", color:t.textMuted }}>{fmt(r.output_tokens)}</td>
+                    <td style={{ padding:"4px 6px", color:t.danger }}>{fmtUSm(r.cost_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        }
+      </Card>
+    </div>
+  );
+}
+
+// ── HISTORIQUE & DATA ─────────────────────────────────────────────────────────
+function Historique({ pvs, failles }) {
+  const [subTab, setSubTab]         = useState("chronologie");
+  const [questions, setQuestions]   = useState([]);
+  const [cadas, setCadas]           = useState([]);
+  const [courriers, setCourriers]   = useState([]);
+  const [engagements, setEngs]      = useState([]);
+  const [journal, setJournal]       = useState([]);
+
+  useEffect(()=>{
+    Promise.all([
+      api.questions.list(),
+      api.cada.list(),
+      api.courriers.list(),
+      api.engagements.list(),
+      api.journal.list(),
+    ]).then(([q,c,co,e,j])=>{
+      setQuestions(q||[]); setCadas(c||[]); setCourriers(co||[]); setEngs(e||[]); setJournal(j||[]);
+    }).catch(()=>{});
+  },[]);
+
+  return (
+    <div>
+      <SectionTitle sub="Chronologie, statistiques et suivi budgétaire">
+        Historique & Data
+      </SectionTitle>
+      <SubTabs
+        tabs={[["chronologie","Chronologie"],["statistiques","Statistiques"],["budget","Budget"],["couts-ia","Coûts IA"]]}
+        active={subTab}
+        onSelect={setSubTab}
+      />
+      {subTab==="chronologie"  && <ChronologieTab pvs={pvs} failles={failles} questions={questions} cadas={cadas} courriers={courriers} engagements={engagements} journal={journal} />}
+      {subTab==="statistiques" && <StatistiquesTab pvs={pvs} failles={failles} questions={questions} cadas={cadas} courriers={courriers} engagements={engagements} />}
+      {subTab==="budget"       && <BudgetTab />}
+      {subTab==="couts-ia"     && <CoutsIATab />}
     </div>
   );
 }
@@ -4237,7 +4716,7 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
   useEffect(() => {
     if (!leafletReady || !mapRef.current || mapInstance.current) return;
     const L = window.L;
-    const map = L.map(mapRef.current).setView([45.856, 4.602], 14);
+    const map = L.map(mapRef.current).setView([45.8398, 4.6471], 14);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "© OpenStreetMap",
       maxZoom: 19,
@@ -4374,6 +4853,10 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
                   {cfg.label}
                 </Btn>
               ))}
+              <Btn size="sm" variant="ghost"
+                onClick={() => mapInstance.current?.setView([45.8398, 4.6471], 14)}>
+                Recentrer
+              </Btn>
             </div>
           )}
           {!leafletReady && <Spinner label="Chargement de la carte…" />}
@@ -4447,391 +4930,6 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
   );
 }
 
-// ── ACCUEIL ───────────────────────────────────────────────────────────────────
-function WelcomeScreen({ onEnter, setTab }) {
-  const t = useT();
-
-  const MODULES = [
-    {
-      label: "Séances",
-      color: t.purple,
-      items: [
-        { id:"seance-live", icon:"●", label:"Séance live",    desc:"Prise de notes en temps réel, détection d'anomalies à chaud" },
-        { id:"pv",          icon:"≡", label:"Procès-verbaux", desc:"Gestion des séances, analyse IA des PDFs, extraction délibérations" },
-        { id:"historique",  icon:"⌛",label:"Historique",     desc:"Frise chronologique complète de toutes les séances" },
-      ],
-    },
-    {
-      label: "Action juridique",
-      color: t.danger,
-      items: [
-        { id:"failles",       icon:"!", label:"Failles",          desc:"Irrégularités légales classées par gravité avec stratégie juridique IA" },
-        { id:"questions",     icon:"?", label:"Questions & CADA",  desc:"Questions écrites et demandes de documents au titre de la loi CADA" },
-        { id:"jurisprudence", icon:"=", label:"Jurisprudence",     desc:"Décisions du TA Lyon et juridictions administratives pertinentes" },
-        { id:"legifrance",    icon:"§", label:"Légifrance",        desc:"Recherche dans les codes et textes applicables aux communes" },
-      ],
-    },
-    {
-      label: "Rédaction",
-      color: t.primary,
-      items: [
-        { id:"modeles",   icon:"□", label:"Modèles",   desc:"Bibliothèque de modèles de courriers juridiques prêts à l'emploi" },
-        { id:"courriers", icon:"✉", label:"Courriers", desc:"Rédaction et suivi des courriers envoyés (préfet, maire, CADA…)" },
-      ],
-    },
-    {
-      label: "Suivi",
-      color: t.success,
-      items: [
-        { id:"engagements", icon:"◎", label:"Engagements",    desc:"Suivi des engagements pris en séance par la majorité" },
-        { id:"journal",     icon:"✎", label:"Journal terrain", desc:"Notes personnelles et compte-rendu de terrain" },
-        { id:"veille",      icon:"◉", label:"Veille régl.",   desc:"Alertes sur les nouveaux textes législatifs applicables" },
-      ],
-    },
-    {
-      label: "Analyses",
-      color: t.warning,
-      items: [
-        { id:"analyses",   icon:"◈", label:"Analyses IA",     desc:"Bilans légaux, questions automatiques, rapports citoyens par IA" },
-        { id:"stats-elus", icon:"∑", label:"Stats élus",      desc:"Présences, votes et comportement par élu sur toute la mandature" },
-        { id:"agenda",     icon:"+", label:"Agenda",          desc:"Prédiction et préparation de l'ordre du jour à venir" },
-        { id:"carte",      icon:"⊕", label:"Carte urbanisme", desc:"Géolocalisation des délibérations d'urbanisme sur fond cadastral" },
-      ],
-    },
-    {
-      label: "Données",
-      color: t.textMuted,
-      items: [
-        { id:"scraper", icon:"↻", label:"Sync Mairie",    desc:"Import automatique des délibérations depuis le site officiel de la mairie" },
-        { id:"config",  icon:"⚙", label:"Configuration",  desc:"Clé API Claude, notifications push, paramètres de l'application" },
-      ],
-    },
-  ];
-
-  return (
-    <div style={{ minHeight:"100vh", width:"100%", background:t.bg, display:"flex", flexDirection:"column",
-      alignItems:"center", justifyContent:"flex-start", padding:"40px 20px 60px",
-      fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif", boxSizing:"border-box" }}>
-
-      {/* En-tête */}
-      <div style={{ textAlign:"center", marginBottom:"40px", maxWidth:"600px", width:"100%", margin:"0 auto 40px" }}>
-        <div style={{ width:"56px", height:"56px", background:t.primaryBg,
-          border:`2px solid ${t.primary}`, borderRadius:"14px",
-          display:"flex", alignItems:"center", justifyContent:"center",
-          color:t.primary, fontSize:"26px", fontWeight:700,
-          margin:"0 auto 20px" }}>⬡</div>
-        <h1 style={{ color:t.text, fontSize:"28px", fontWeight:700, margin:"0 0 8px 0", lineHeight:1.2 }}>
-          Bienvenue, conseiller de l'opposition
-        </h1>
-        <p style={{ color:t.textSec, fontSize:"15px", margin:"0 0 6px 0" }}>
-          Plateforme de veille municipale — {COMMUNE.nom} ({COMMUNE.cp})
-        </p>
-        <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>
-          Mandature en cours · Maire : {CONSEIL.maire}
-        </p>
-      </div>
-
-      {/* Infographie fonctionnalités */}
-      <div style={{ width:"100%", maxWidth:"1060px", marginBottom:"40px", margin:"0 auto 40px" }}>
-        <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
-          letterSpacing:"0.08em", textAlign:"center", marginBottom:"20px" }}>
-          Fonctionnalités disponibles
-        </p>
-        <div style={{ display:"flex", gap:"14px", alignItems:"flex-start" }}>
-          {[0, 1, 2].map(colIdx => (
-            <div key={colIdx} style={{ flex:"1 1 0", minWidth:0, display:"flex", flexDirection:"column", gap:"14px" }}>
-              {MODULES.filter((_, i) => i % 3 === colIdx).map(group => (
-                <div key={group.label} style={{ background:t.surface, border:`1px solid ${t.border}`,
-                  borderRadius:"10px", padding:"16px", borderTop:`3px solid ${group.color}` }}>
-                  <p style={{ color:group.color, fontSize:"10px", fontWeight:700,
-                    textTransform:"uppercase", letterSpacing:"0.08em", margin:"0 0 12px 0" }}>
-                    {group.label}
-                  </p>
-                  <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
-                    {group.items.map(item => (
-                      <div key={item.id}
-                        onClick={() => { onEnter(); setTab(item.id); }}
-                        style={{ display:"flex", gap:"10px", alignItems:"flex-start",
-                          padding:"8px 10px", borderRadius:"7px", cursor:"pointer",
-                          background:t.surfaceAlt, border:`1px solid transparent`,
-                          transition:"border-color 0.12s" }}
-                        onMouseEnter={e => e.currentTarget.style.borderColor = t.borderMid}
-                        onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}>
-                        <span style={{ color:group.color, fontSize:"15px", width:"20px",
-                          flexShrink:0, textAlign:"center", lineHeight:1.4 }}>{item.icon}</span>
-                        <div>
-                          <p style={{ color:t.text, fontSize:"13px", fontWeight:600, margin:"0 0 2px 0" }}>
-                            {item.label}
-                          </p>
-                          <p style={{ color:t.textMuted, fontSize:"11px", margin:0, lineHeight:1.4 }}>
-                            {item.desc}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* CTA */}
-      <div style={{ display:"flex", gap:"12px", alignItems:"center" }}>
-        <button onClick={onEnter} style={{
-          background:t.primary, border:"none", color:"#fff",
-          padding:"13px 32px", borderRadius:"8px", fontSize:"14px", fontWeight:700,
-          cursor:"pointer", fontFamily:"inherit" }}>
-          Accéder au tableau de bord
-        </button>
-        <button onClick={() => { onEnter(); setTab("aide"); }} style={{
-          background:"transparent", border:`1px solid ${t.border}`, color:t.textSec,
-          padding:"13px 20px", borderRadius:"8px", fontSize:"13px", fontWeight:500,
-          cursor:"pointer", fontFamily:"inherit" }}>
-          Voir l'aide
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── AIDE ──────────────────────────────────────────────────────────────────────
-function HelpPage({ setTab }) {
-  const t = useT();
-
-  const SECTIONS = [
-    {
-      label: "Séances",
-      color: t.purple,
-      items: [
-        {
-          icon:"⬡", id:"dashboard", label:"Tableau de bord",
-          desc:"Vue synthétique de l'activité : compteurs (textes surveillés, séances, failles ouvertes), alertes actives et dernières séances importées.",
-          usages:["Vérifier les alertes au lancement","Accéder rapidement à une section depuis les stats"],
-          tips:["Les badges rouges/orange en haut signalent des délais de recours urgents (<10j)"],
-        },
-        {
-          icon:"●", id:"seance-live", label:"Séance live",
-          desc:"Outil de prise de notes en temps réel pendant une séance du conseil. Permet d'enregistrer les votes, anomalies et interventions au fil de la séance.",
-          usages:["Saisir les délibérations et votes pendant la séance","Signaler une anomalie de procédure en direct","Générer un compte-rendu automatique après la séance"],
-          tips:["Ouvrez sur mobile pendant la séance pour saisir en direct","Les anomalies saisies ici remontent dans Failles automatiquement"],
-        },
-        {
-          icon:"≡", id:"pv", label:"Procès-verbaux",
-          desc:"Gestion complète des séances enregistrées. Affiche les PDFs des délibérations, permet l'analyse IA de chaque séance et l'extraction individuelle des délibérations avec géolocalisation.",
-          usages:["Analyser un PV avec l'IA pour détecter des irrégularités","Extraire les délibérations d'une séance pour les visualiser sur la carte","Consulter les délais de recours gracieux par séance"],
-          tips:["Cliquez sur 'Extraire' pour obtenir les délibérations individuelles avec votes et anomalies","Le badge 'Auto' indique une séance importée depuis le site de la mairie","Les délais recours apparaissent en rouge quand il reste moins de 10 jours"],
-        },
-        {
-          icon:"⌛", id:"historique", label:"Historique",
-          desc:"Frise chronologique et statistiques consolidées de l'ensemble des séances. Vue d'ensemble sur la mandature.",
-          usages:["Retrouver une séance par date ou objet","Analyser les tendances de vote sur la durée"],
-          tips:["Utilisez les filtres par année pour affiner la recherche"],
-        },
-      ],
-    },
-    {
-      label: "Action juridique",
-      color: t.danger,
-      items: [
-        {
-          icon:"!", id:"failles", label:"Failles & Irrégularités",
-          desc:"Registre des irrégularités légales détectées, classées par gravité (Haute / Moyenne / Basse). Chaque faille inclut une description, la base légale, le statut de traitement et un conseil d'action.",
-          usages:["Consulter les failles ouvertes pour prioriser les actions","Demander une stratégie juridique IA sur une faille","Marquer une faille 'En cours' ou 'Résolue' au fil du suivi"],
-          tips:["L'IA peut rédiger une stratégie de recours complète (délais, instances, procédure) pour chaque faille","Les failles Haute gravité peuvent être transmises au Préfet via 'Analyses IA > Lettre au Préfet'"],
-        },
-        {
-          icon:"?", id:"questions", label:"Questions & CADA",
-          desc:"Outil de rédaction de questions écrites au maire et de demandes de documents au titre de la loi CADA (Commission d'Accès aux Documents Administratifs).",
-          usages:["Rédiger une question écrite sur une délibération contestée","Demander l'accès à un document administratif (CADA)","Suivre l'état des demandes (en attente, répondu, contesté)"],
-          tips:["La CADA permet d'obtenir n'importe quel document administratif non nominatif","Une demande sans réponse sous 1 mois vaut refus implicite — vous pouvez saisir la CADA"],
-        },
-        {
-          icon:"=", id:"jurisprudence", label:"Jurisprudence",
-          desc:"Recherche de décisions de justice pertinentes pour les communes de la région (TA Lyon, CAA Lyon, Conseil d'État). Résultats enrichis avec analyse de pertinence pour Fleurieux.",
-          usages:["Trouver une décision appuyant un recours","Vérifier si un type d'irrégularité a déjà été sanctionné","Obtenir la référence exacte pour une question orale"],
-          tips:["Essayez les raccourcis prédéfinis (Convocation CM, PLU, Droits opposition…)","Si le scraping échoue, les résultats IA sont une bonne alternative"],
-        },
-        {
-          icon:"§", id:"legifrance", label:"Légifrance",
-          desc:"Accès aux codes consolidés, décrets et textes officiels applicables aux communes, via l'API PISTE ou l'IA Claude en fallback.",
-          usages:["Retrouver l'article exact du CGCT applicable","Vérifier si un texte est en vigueur","Surveiller un texte pour être alerté de ses évolutions"],
-          tips:["Cliquez '+ Surveiller' pour ajouter un texte à votre veille active","Si PISTE n'est pas souscrit, l'IA Claude répond avec les textes pertinents"],
-        },
-      ],
-    },
-    {
-      label: "Rédaction",
-      color: t.primary,
-      items: [
-        {
-          icon:"□", id:"modeles", label:"Modèles",
-          desc:"Bibliothèque de modèles de courriers juridiques : lettres au Préfet, demandes CADA, recours gracieux, questions écrites. Génération IA sur mesure.",
-          usages:["Partir d'un modèle pour rédiger un courrier officiel","Générer un modèle IA adapté au contexte d'une faille","Créer et sauvegarder vos propres modèles"],
-          tips:["Le générateur IA prend en compte le contexte communal (Fleurieux, Rhône, préfet compétent)"],
-        },
-        {
-          icon:"✉", id:"courriers", label:"Courriers",
-          desc:"Registre des courriers envoyés ou à envoyer. Suivi du statut (rédigé, envoyé, répondu) avec historique complet.",
-          usages:["Suivre les courriers sans réponse","Retrouver le texte d'un courrier précédemment envoyé","Exporter un courrier au format imprimable"],
-          tips:["Liez un courrier à une faille pour un suivi cohérent des actions"],
-        },
-      ],
-    },
-    {
-      label: "Suivi",
-      color: t.success,
-      items: [
-        {
-          icon:"◎", id:"engagements", label:"Engagements",
-          desc:"Registre des engagements pris en séance par la majorité (maire et adjoints). Suivi de l'avancement, alertes sur les engagements non tenus.",
-          usages:["Enregistrer un engagement pris en séance","Vérifier les engagements non tenus pour interpellation","Consulter l'historique des promesses par élu"],
-          tips:["Liez chaque engagement à la séance source pour conserver la traçabilité"],
-        },
-        {
-          icon:"✎", id:"journal", label:"Journal terrain",
-          desc:"Journal de bord personnel pour noter observations, informations de terrain, contacts et éléments non officiels à ne pas oublier.",
-          usages:["Consigner un échange informel avec un habitant","Mémoriser une observation sur un chantier communal","Préparer ses notes avant une séance"],
-          tips:["Ces notes sont privées et ne sont pas synchronisées avec les données officielles"],
-        },
-        {
-          icon:"◉", id:"veille", label:"Veille réglementaire",
-          desc:"Alertes automatiques sur les nouveaux textes législatifs, décrets et circulaires impactant les communes de moins de 5 000 habitants.",
-          usages:["Être alerté des nouvelles lois avant leur application","Anticiper les obligations réglementaires nouvelles","Consulter le calendrier des échéances légales"],
-          tips:["La veille est filtrée pour ne retenir que les textes pertinents pour une commune rurale"],
-        },
-      ],
-    },
-    {
-      label: "Analyses",
-      color: t.warning,
-      items: [
-        {
-          icon:"◈", id:"analyses", label:"Analyses IA",
-          desc:"Moteur d'analyse IA contextuel : bilan de légalité, questions pour la prochaine séance, rapport citoyen, analyse PLU/ZAN, audit budget, lettre au Préfet.",
-          usages:["Générer 8 questions pour la prochaine séance en un clic","Produire un rapport accessible pour les habitants","Rédiger une lettre au Préfet sur les irrégularités les plus graves"],
-          tips:["Les analyses utilisent toutes les données de la plateforme (PV, failles, délibérations)","Le rapport citoyen peut être publié sur les réseaux ou distribué en tract"],
-        },
-        {
-          icon:"∑", id:"stats-elus", label:"Stats élus",
-          desc:"Statistiques individuelles par élu : taux de présence aux séances, comportement de vote (pour/contre/abstention), évolution dans le temps.",
-          usages:["Identifier un élu souvent absent pour interpellation","Analyser les votes dissidents au sein de la majorité","Préparer un argumentaire sur la transparence démocratique"],
-          tips:["Les stats sont calculées automatiquement à partir des PV importés"],
-        },
-        {
-          icon:"+", id:"agenda", label:"Agenda",
-          desc:"Préparation et prédiction des ordres du jour à venir, avec benchmark financier des communes comparables et suivi de l'agenda officiel.",
-          usages:["Anticiper les sujets du prochain conseil","Comparer les dépenses communales avec d'autres communes du Rhône","Préparer des questions sur les finances avant le vote du budget"],
-          tips:["La prédiction IA s'appuie sur les récurrences observées dans les PV passés"],
-        },
-        {
-          icon:"⊕", id:"carte", label:"Carte urbanisme",
-          desc:"Carte interactive avec cadastre et couches PLU. Visualisation géographique des délibérations d'urbanisme extraites des PV, avec centrage automatique sur chaque parcelle.",
-          usages:["Localiser une délibération de permis de construire","Vérifier la cohérence d'une décision avec le PLU","Identifier des évolutions du tissu urbain dans le temps"],
-          tips:["Cliquez 'Voir sur la carte' depuis une délibération pour centrer la vue automatiquement","Les couches IGN (orthophoto, cadastre, PLU) sont activables indépendamment"],
-        },
-      ],
-    },
-    {
-      label: "Données",
-      color: t.textMuted,
-      items: [
-        {
-          icon:"↻", id:"scraper", label:"Sync Mairie",
-          desc:"Import automatique des délibérations depuis le site officiel de la mairie de Fleurieux. Synchronisation hebdomadaire automatique (lundi 8h) ou manuelle à la demande.",
-          usages:["Importer les dernières séances en un clic","Vérifier le journal des synchronisations automatiques","Consulter la composition du conseil municipal"],
-          tips:["La synchronisation auto s'exécute chaque lundi — vérifiez le journal si vous suspectez une mise à jour manquée","Les PDFs des délibérations sont téléchargés et liés automatiquement à chaque séance"],
-        },
-        {
-          icon:"⚙", id:"config", label:"Configuration",
-          desc:"Paramètres de l'application : clé API Claude pour les analyses IA, notifications push, réglages de l'interface.",
-          usages:["Saisir la clé API Claude pour activer les analyses IA","Activer les notifications push pour les alertes urgentes"],
-          tips:["Sans clé API, les fonctions d'analyse IA et de recherche Légifrance sont désactivées","La clé est stockée localement et n'est jamais transmise à des tiers"],
-        },
-      ],
-    },
-  ];
-
-  return (
-    <div style={{ maxWidth:"900px" }}>
-      <div style={{ marginBottom:"28px" }}>
-        <h2 style={{ color:t.text, fontSize:"22px", fontWeight:700, margin:"0 0 4px 0" }}>
-          Aide & Documentation
-        </h2>
-        <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>
-          Guide complet des fonctionnalités — Opposition Municipale Fleurieux
-        </p>
-      </div>
-
-      <div style={{ display:"flex", flexDirection:"column", gap:"24px" }}>
-        {SECTIONS.map(section => (
-          <div key={section.label}>
-            <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"14px",
-              paddingBottom:"8px", borderBottom:`2px solid ${section.color}33` }}>
-              <div style={{ width:"4px", height:"20px", background:section.color, borderRadius:"2px" }} />
-              <h3 style={{ color:section.color, fontSize:"13px", fontWeight:700,
-                textTransform:"uppercase", letterSpacing:"0.08em", margin:0 }}>
-                {section.label}
-              </h3>
-            </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
-              {section.items.map(item => (
-                <div key={item.id} style={{ background:t.surface, border:`1px solid ${t.border}`,
-                  borderRadius:"10px", padding:"18px", borderLeft:`3px solid ${section.color}` }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"10px" }}>
-                    <span style={{ color:section.color, fontSize:"16px", width:"22px",
-                      textAlign:"center", flexShrink:0 }}>{item.icon}</span>
-                    <div style={{ display:"flex", alignItems:"center", gap:"10px", flex:1 }}>
-                      <h4 style={{ color:t.text, fontSize:"15px", fontWeight:700, margin:0 }}>
-                        {item.label}
-                      </h4>
-                      <button onClick={() => setTab(item.id)} style={{
-                        background:"transparent", border:`1px solid ${t.border}`,
-                        color:t.primary, fontSize:"11px", padding:"2px 9px", borderRadius:"4px",
-                        cursor:"pointer", fontFamily:"inherit", fontWeight:500 }}>
-                        Ouvrir →
-                      </button>
-                    </div>
-                  </div>
-                  <p style={{ color:t.textSec, fontSize:"13px", lineHeight:"1.6", margin:"0 0 12px 0" }}>
-                    {item.desc}
-                  </p>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px" }}>
-                    <div>
-                      <p style={{ color:t.textMuted, fontSize:"10px", fontWeight:700, margin:"0 0 6px 0",
-                        textTransform:"uppercase", letterSpacing:"0.06em" }}>Cas d'usage</p>
-                      {item.usages.map((u, i) => (
-                        <p key={i} style={{ color:t.textSec, fontSize:"12px", margin:"0 0 3px 0",
-                          display:"flex", gap:"6px" }}>
-                          <span style={{ color:section.color, flexShrink:0 }}>·</span>{u}
-                        </p>
-                      ))}
-                    </div>
-                    {item.tips.length > 0 && (
-                      <div style={{ background:t.surfaceAlt, border:`1px solid ${t.border}`,
-                        borderRadius:"7px", padding:"10px 12px" }}>
-                        <p style={{ color:t.textMuted, fontSize:"10px", fontWeight:700, margin:"0 0 6px 0",
-                          textTransform:"uppercase", letterSpacing:"0.06em" }}>Tips</p>
-                        {item.tips.map((tip, i) => (
-                          <p key={i} style={{ color:t.textMuted, fontSize:"11px", margin:"0 0 4px 0",
-                            lineHeight:"1.5", display:"flex", gap:"6px" }}>
-                            <span style={{ flexShrink:0 }}>→</span>{tip}
-                          </p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── NAV GROUPS ────────────────────────────────────────────────────────────────
 const NAV_GROUPS = [
   {
@@ -4840,7 +4938,7 @@ const NAV_GROUPS = [
       { id:"dashboard",    label:"Tableau de bord", icon:"⬡" },
       { id:"seance-live",  label:"Séance live",     icon:"●" },
       { id:"pv",           label:"Procès-verbaux",  icon:"≡" },
-      { id:"historique",   label:"Historique",      icon:"⌛" },
+      { id:"historique",   label:"Historique & Data", icon:"⌛" },
     ],
   },
   {
@@ -4881,11 +4979,139 @@ const NAV_GROUPS = [
     items: [
       { id:"scraper",      label:"Sync Mairie",     icon:"↻" },
       { id:"config",       label:"Configuration",   icon:"⚙" },
-      { id:"admin",        label:"Admin",           icon:"$" },
-      { id:"aide",         label:"Aide",            icon:"?" },
+      { id:"couts",        label:"Coûts & Services",icon:"$" },
     ],
   },
 ];
+
+// ── COÛTS & SERVICES ─────────────────────────────────────────────────────────
+const FEATURES_CATALOG = [
+  { label:"Scraping mairie",            gratuit:true,  detail:"Fetch HTML, cron hebdo" },
+  { label:"Légifrance PISTE",           gratuit:true,  detail:"API OAuth publique" },
+  { label:"Jurisprudence",              gratuit:true,  detail:"Légifrance" },
+  { label:"Sync automatique (cron)",    gratuit:true,  detail:"Serveur interne" },
+  { label:"Veille réglementaire",       gratuit:true,  detail:"Scan RSS / fetch" },
+  { label:"Carte urbanisme",            gratuit:true,  detail:"IGN Géoportail, tuiles WMS" },
+  { label:"Analyse PDF séance",         gratuit:false, cout:"~$0.05", detail:"Claude — lit le PDF complet" },
+  { label:"Analyse tendances",          gratuit:false, cout:"~$0.04", detail:"Claude — tout l'historique" },
+  { label:"Rapport citoyen",            gratuit:false, cout:"~$0.08", detail:"Claude — rapport long format" },
+  { label:"Prédiction agenda",          gratuit:false, cout:"~$0.05", detail:"Claude — historique séances" },
+  { label:"Stats élus",                 gratuit:false, cout:"~$0.10", detail:"Claude — analyse tous PVs" },
+  { label:"Benchmark financier",        gratuit:false, cout:"~$0.06", detail:"Claude + données INSEE" },
+  { label:"Génération question écrite", gratuit:false, cout:"~$0.02", detail:"Claude" },
+  { label:"Génération courrier",        gratuit:false, cout:"~$0.02", detail:"Claude" },
+  { label:"Génération CADA",            gratuit:false, cout:"~$0.01", detail:"Claude" },
+];
+
+function CoutsServices() {
+  const t = useT();
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{
+    fetch("/api/admin/usage")
+      .then(r=>r.json())
+      .then(d=>{ setData(d); setLoading(false); })
+      .catch(()=>setLoading(false));
+  },[]);
+
+  const fmt     = n => (n??0).toLocaleString("fr-FR");
+  const gratuits = FEATURES_CATALOG.filter(f=>f.gratuit);
+  const payants  = FEATURES_CATALOG.filter(f=>!f.gratuit);
+  const projMensuel = data?.byDay?.length>0
+    ? (data.byDay.reduce((s,d)=>s+d.cost,0)/data.byDay.length)*30
+    : null;
+
+  return (
+    <div>
+      <SectionTitle sub="Ce qui est gratuit, ce qui consomme des crédits IA">
+        Coûts & Services
+      </SectionTitle>
+
+      {!loading && data && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:"10px", marginBottom:"18px" }}>
+          {[
+            { label:"Appels IA total",   value:fmt(data.total.calls),                    color:t.primary },
+            { label:"Coût cumulé (USD)", value:`$${(data.total.cost??0).toFixed(3)}`,    color:t.danger },
+            { label:"Projection / mois", value:projMensuel!==null?`$${projMensuel.toFixed(3)}`:"—",
+              color:projMensuel!==null&&projMensuel>5?t.danger:t.success },
+          ].map(s=>(
+            <Card key={s.label} style={{ textAlign:"center" }} hover={false}>
+              <div style={{ fontSize:"22px", fontWeight:700, color:s.color }}>{s.value}</div>
+              <div style={{ fontSize:"10px", color:t.textMuted, marginTop:"4px" }}>{s.label}</div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <Card style={{ marginBottom:"12px" }}>
+        <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+          letterSpacing:"0.06em", margin:"0 0 12px 0" }}>
+          Gratuit ({gratuits.length} fonctionnalités)
+        </p>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+          <tbody>
+            {gratuits.map(f=>(
+              <tr key={f.label} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                <td style={{ padding:"7px 8px", color:t.text }}>{f.label}</td>
+                <td style={{ padding:"7px 8px", width:"70px" }}><Badge label="Gratuit" color={t.success} /></td>
+                <td style={{ padding:"7px 8px", color:t.textMuted, fontSize:"11px" }}>{f.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card style={{ marginBottom:"12px" }}>
+        <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+          letterSpacing:"0.06em", margin:"0 0 12px 0" }}>
+          Fonctionnalités IA ({payants.length} — clé Anthropic requise)
+        </p>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+          <thead><tr style={{ color:t.textMuted, textAlign:"left" }}>
+            {["Fonctionnalité","","Coût / appel","Détail"].map(h=>(
+              <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}`,
+                fontSize:"10px", textTransform:"uppercase" }}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {payants.map(f=>(
+              <tr key={f.label} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                <td style={{ padding:"7px 8px", color:t.text }}>{f.label}</td>
+                <td style={{ padding:"7px 8px", width:"50px" }}><Badge label="IA" color={t.warning} /></td>
+                <td style={{ padding:"7px 8px", color:t.danger, fontWeight:600 }}>{f.cout}</td>
+                <td style={{ padding:"7px 8px", color:t.textMuted, fontSize:"11px" }}>{f.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      {data?.byRoute?.length>0 && (
+        <Card>
+          <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+            letterSpacing:"0.06em", margin:"0 0 12px 0" }}>Usage réel par fonctionnalité</p>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+            <thead><tr style={{ color:t.textMuted, textAlign:"left" }}>
+              {["Route","Appels","Coût USD"].map(h=>(
+                <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {data.byRoute.map(r=>(
+                <tr key={r.route} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                  <td style={{ padding:"7px 8px", color:t.text, fontFamily:"monospace", fontSize:"11px" }}>{r.route}</td>
+                  <td style={{ padding:"7px 8px", color:t.textMuted }}>{fmt(r.calls)}</td>
+                  <td style={{ padding:"7px 8px", color:t.danger, fontWeight:600 }}>${(r.cost??0).toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 // Items visibles dans la barre bottom mobile (les plus utilisés)
 const BOTTOM_NAV = ["dashboard","seance-live","pv","failles"];
@@ -4903,7 +5129,7 @@ function useWindowWidth() {
 
 // ── APP ────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState("accueil");
+  const [tab, setTab] = useState("dashboard");
   const [focusDelib, setFocusDelib] = useState(null);
   const [lois, setLois] = useState([]);
   const [pvs, setPvs] = useState([]);
@@ -4972,8 +5198,6 @@ export default function App() {
       </div>
     );
     switch(tab) {
-      case "accueil":       return null;
-      case "aide":          return <HelpPage setTab={setTab} />;
       case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} />;
       case "seance-live":   return <SeanceLive setPvs={setPvs} />;
       case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} onGoToCarte={(d) => { setFocusDelib(d); setTab("carte"); }} />;
@@ -4987,6 +5211,7 @@ export default function App() {
       case "historique":    return <Historique pvs={pvs} failles={failles} />;
       case "config":        return <Configuration />;
       case "admin":         return <AdminPanel />;
+      case "couts":         return <CoutsServices />;
       case "modeles":       return <Modeles />;
       case "courriers":     return <Courriers />;
       case "engagements":   return <Engagements pvs={pvs} />;
@@ -5093,21 +5318,6 @@ export default function App() {
       ))}
     </div>
   );
-
-  // ── ÉCRAN D'ACCUEIL ─────────────────────────────────────────────────────────
-  if (tab === "accueil") {
-    return (
-      <ThemeCtx.Provider value={theme}>
-        <style>{`
-          * { box-sizing:border-box; margin:0; padding:0; }
-          @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
-          input::placeholder, textarea::placeholder { color:${theme.textMuted}; }
-          input, textarea, button, select { outline:none; }
-        `}</style>
-        <WelcomeScreen onEnter={() => setTab("dashboard")} setTab={setTab} />
-      </ThemeCtx.Provider>
-    );
-  }
 
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────────
   if (isDesktop) {

@@ -1,7 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const { db } = require("../db");
-const { extractPdfText, analyzeDeliberation } = require("../services/pdf-analyzer");
+const { extractAndAnalyze } = require("../services/pdf-analyzer");
 const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
@@ -90,14 +90,7 @@ router.post("/extract/:pvId", async (req, res) => {
     send({ type: "progress", current: done + 1, total: pdfs.length, nom: pdf.nom });
 
     try {
-      const text = await extractPdfText(pdf.url);
-      if (!text || text.length < 30) {
-        errors++;
-        send({ type: "skip", nom: pdf.nom, reason: "PDF non lisible" });
-        continue;
-      }
-
-      const analysis = await analyzeDeliberation(text, pdf.nom);
+      const { text, analysis } = await extractAndAnalyze(pdf.url, pdf.nom);
       if (analysis.error) {
         errors++;
         send({ type: "skip", nom: pdf.nom, reason: analysis.error });
