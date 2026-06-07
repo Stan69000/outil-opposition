@@ -3,6 +3,7 @@ const axios = require("axios");
 const cheerio = require("cheerio");
 const { db } = require("../db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -98,6 +99,7 @@ Retourne UNIQUEMENT ce JSON :
       }],
     });
 
+    trackUsage("agenda/predict", "claude-opus-4-5", msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(raw);
     res.json(parsed);

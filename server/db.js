@@ -169,6 +169,18 @@ db.prepare(`
   )
 `).run();
 
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS ai_usage_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    called_at TEXT DEFAULT (datetime('now')),
+    route TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0
+  )
+`).run();
+
 function runInTransaction(fn) {
   db.prepare("BEGIN").run();
   try {

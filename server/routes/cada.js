@@ -1,6 +1,7 @@
 const express = require("express");
 const { db } = require("../db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -92,6 +93,7 @@ Retourne le texte de la lettre directement (pas de JSON, pas de markdown).`,
     }],
   });
 
+  trackUsage("cada/generate", "claude-opus-4-5", msg.usage);
   res.json({ texte: msg.content[0].text, document_demande, date_demande: new Date().toISOString().slice(0, 10) });
 });
 

@@ -1,5 +1,6 @@
 const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 
@@ -34,6 +35,7 @@ Format: {"results":[{"id":"CODE-ARTICLE","titre":"...","code":"CGCT|CODE_URBANIS
       system: systemPrompt,
       messages: [{ role: "user", content: userContent }],
     });
+    trackUsage("ai", "claude-sonnet-4-5", message.usage);
 
     res.json({ text: message.content[0]?.text || "" });
   } catch (err) {

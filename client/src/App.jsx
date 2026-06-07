@@ -2426,6 +2426,158 @@ function AgendaPrep() {
   );
 }
 
+// ── ADMIN ──────────────────────────────────────────────────────────────────────
+function AdminPanel() {
+  const t = useContext(ThemeCtx);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/admin/usage")
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setErr(e.message); setLoading(false); });
+  }, []);
+
+  if (loading) return <Spinner label="Chargement…" />;
+  if (err) return <p style={{ color:t.danger, fontSize:"13px" }}>Erreur : {err}</p>;
+
+  const fmt = n => (n ?? 0).toLocaleString("fr-FR");
+  const fmtUsd = n => `$${((n ?? 0)).toFixed(4)}`;
+  const fmtUsdLarge = n => `$${((n ?? 0)).toFixed(6)}`;
+
+  const { total, byModel, byRoute, byDay, recent } = data;
+
+  return (
+    <div style={{ maxWidth:"900px", margin:"0 auto" }}>
+      <SectionTitle>Coûts API Anthropic</SectionTitle>
+
+      {/* Résumé global */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:"12px", marginBottom:"24px" }}>
+        {[
+          { label:"Appels total",      value: fmt(total.calls) },
+          { label:"Tokens entrée",     value: fmt(total.input) },
+          { label:"Tokens sortie",     value: fmt(total.output) },
+          { label:"Coût total (USD)",  value: fmtUsd(total.cost), big:true },
+        ].map(s => (
+          <Card key={s.label} style={{ textAlign:"center" }}>
+            <div style={{ fontSize: s.big ? "22px" : "20px", fontWeight:700,
+              color: s.big ? t.danger : t.primary, fontVariantNumeric:"tabular-nums" }}>
+              {s.value}
+            </div>
+            <div style={{ fontSize:"11px", color:t.textMuted, marginTop:"4px" }}>{s.label}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Par modèle */}
+      <Card style={{ marginBottom:"20px" }}>
+        <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>Par modèle</h3>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+          <thead>
+            <tr style={{ color:t.textMuted, textAlign:"left" }}>
+              {["Modèle","Appels","Tokens in","Tokens out","Coût USD"].map(h => (
+                <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {byModel.map(r => (
+              <tr key={r.model} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                <td style={{ padding:"6px 8px", color:t.text, fontFamily:"monospace" }}>{r.model}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.calls)}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.input)}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.output)}</td>
+                <td style={{ padding:"6px 8px", color:t.danger, fontWeight:600 }}>{fmtUsd(r.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      {/* Par route */}
+      <Card style={{ marginBottom:"20px" }}>
+        <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>Par fonctionnalité</h3>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+          <thead>
+            <tr style={{ color:t.textMuted, textAlign:"left" }}>
+              {["Route","Appels","Coût USD"].map(h => (
+                <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {byRoute.map(r => (
+              <tr key={r.route} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                <td style={{ padding:"6px 8px", color:t.text, fontFamily:"monospace" }}>{r.route}</td>
+                <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.calls)}</td>
+                <td style={{ padding:"6px 8px", color:t.danger, fontWeight:600 }}>{fmtUsd(r.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      {/* Historique 30 jours */}
+      {byDay.length > 0 && (
+        <Card style={{ marginBottom:"20px" }}>
+          <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>Historique (30 j.)</h3>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"12px" }}>
+            <thead>
+              <tr style={{ color:t.textMuted, textAlign:"left" }}>
+                {["Jour","Appels","Coût USD"].map(h => (
+                  <th key={h} style={{ padding:"4px 8px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {byDay.map(r => (
+                <tr key={r.day} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                  <td style={{ padding:"6px 8px", color:t.text }}>{r.day}</td>
+                  <td style={{ padding:"6px 8px", color:t.textMuted }}>{fmt(r.calls)}</td>
+                  <td style={{ padding:"6px 8px", color:t.danger, fontWeight:600 }}>{fmtUsd(r.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      {/* Appels récents */}
+      <Card>
+        <h3 style={{ fontSize:"13px", fontWeight:600, color:t.text, marginBottom:"12px" }}>50 derniers appels</h3>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:"11px" }}>
+          <thead>
+            <tr style={{ color:t.textMuted, textAlign:"left" }}>
+              {["Date","Route","Modèle","In","Out","Coût"].map(h => (
+                <th key={h} style={{ padding:"4px 6px", borderBottom:`1px solid ${t.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {recent.map(r => (
+              <tr key={r.id} style={{ borderBottom:`1px solid ${t.borderMid}` }}>
+                <td style={{ padding:"4px 6px", color:t.textMuted, whiteSpace:"nowrap" }}>{r.called_at?.slice(0,16)}</td>
+                <td style={{ padding:"4px 6px", color:t.text, fontFamily:"monospace" }}>{r.route}</td>
+                <td style={{ padding:"4px 6px", color:t.textMuted, fontFamily:"monospace" }}>{r.model?.replace("claude-","")}</td>
+                <td style={{ padding:"4px 6px", color:t.textMuted }}>{fmt(r.input_tokens)}</td>
+                <td style={{ padding:"4px 6px", color:t.textMuted }}>{fmt(r.output_tokens)}</td>
+                <td style={{ padding:"4px 6px", color:t.danger }}>{fmtUsdLarge(r.cost_usd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {recent.length === 0 && (
+          <p style={{ color:t.textMuted, fontSize:"12px", textAlign:"center", padding:"20px" }}>
+            Aucun appel enregistré — le tracking démarre maintenant.
+          </p>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ── TABS ───────────────────────────────────────────────────────────────────────
 const TABS = [
   { id:"dashboard",      label:"Tableau de bord", icon:"⬡" },
@@ -2439,6 +2591,7 @@ const TABS = [
   { id:"analyses",       label:"Analyses IA",      icon:"◈" },
   { id:"scraper",        label:"Sync Mairie",      icon:"↻" },
   { id:"historique",     label:"Historique",       icon:"⌛" },
+  { id:"admin",          label:"Admin",            icon:"$" },
 ];
 
 // ── APP ────────────────────────────────────────────────────────────────────────
@@ -2516,6 +2669,7 @@ export default function App() {
       case "analyses":      return <Analyses lois={lois} pvs={pvs} failles={failles} />;
       case "scraper":       return <SyncMairie onImport={imp=>setPvs(prev=>[...prev,...imp])} />;
       case "historique":    return <Historique pvs={pvs} failles={failles} />;
+      case "admin":         return <AdminPanel />;
       default: return null;
     }
   };

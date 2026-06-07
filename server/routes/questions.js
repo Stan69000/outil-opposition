@@ -1,6 +1,7 @@
 const express = require("express");
 const { db } = require("../db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -102,6 +103,7 @@ Retourne UNIQUEMENT ce JSON :
     }],
   });
 
+  trackUsage("questions/generate", "claude-opus-4-5", msg.usage);
   const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
   res.json(JSON.parse(raw));
 });
@@ -127,6 +129,7 @@ Retourne le texte de la relance directement (pas de JSON).`,
     }],
   });
 
+  trackUsage("questions/relance", "claude-opus-4-5", msg.usage);
   const relanceText = msg.content[0].text;
   db.prepare("UPDATE questions_ecrites SET relances = relances + 1, statut = 'relance' WHERE id = ?").run(q.id);
   res.json({ texte: relanceText });

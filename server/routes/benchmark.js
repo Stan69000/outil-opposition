@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const Anthropic = require("@anthropic-ai/sdk");
 const { db } = require("../db");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -110,6 +111,7 @@ Réponse en français, structurée, accessible aux citoyens non experts. 3-4 par
       }],
     });
 
+    trackUsage("benchmark/analyse", "claude-opus-4-5", msg.usage);
     res.json({ analyse: msg.content[0].text, fleurieux: fleurieux[0], annee: fleurieux[0].exer });
   } catch (err) {
     res.status(502).json({ error: err.message });

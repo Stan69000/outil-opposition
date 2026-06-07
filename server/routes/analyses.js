@@ -1,6 +1,7 @@
 const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");
 const { db } = require("../db");
+const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -60,6 +61,7 @@ Identifie les PATTERNS SIGNIFICATIFS pour l'opposition. Retourne un JSON valide 
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/patterns", "claude-opus-4-5", msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const result = JSON.parse(raw);
     res.json(result);
@@ -108,6 +110,7 @@ Retourne UNIQUEMENT ce JSON :
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/budget", "claude-opus-4-5", msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const { lignes } = JSON.parse(raw);
 
@@ -162,6 +165,7 @@ Retourne ce JSON valide uniquement :
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/seance-prep", "claude-opus-4-5", msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     res.json(JSON.parse(raw));
   } catch (err) {
@@ -220,6 +224,7 @@ Retourne ce JSON valide uniquement :
       messages: [{ role: "user", content: prompt }],
     });
 
+    trackUsage("analyses/rapport", "claude-opus-4-5", msg.usage);
     const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
     const rapport = JSON.parse(raw);
     rapport._meta = {

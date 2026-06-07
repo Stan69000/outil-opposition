@@ -38,6 +38,7 @@ app.use("/api/cada",         aiLimiter, require("./routes/cada"));
 app.use("/api/agenda",       aiLimiter, require("./routes/agenda"));
 app.use("/api/benchmark",    require("./routes/benchmark"));
 app.use("/api/push",         require("./routes/push"));
+app.use("/api/admin",        require("./routes/admin"));
 
 // Root info en dev
 if (process.env.NODE_ENV !== "production") {
