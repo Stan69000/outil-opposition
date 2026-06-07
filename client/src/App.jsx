@@ -4639,8 +4639,7 @@ function VeilleReglementaire() {
 const IGN_LAYERS = {
   cadastre: {
     label: "Cadastre",
-    layer: null,
-    make: (L) => L.tileLayer.wms(
+    make: (L, map) => L.tileLayer.wms(
       "https://data.geopf.fr/wms-r/wms",
       {
         layers: "CADASTRALPARCELS.PARCELLAIRE_EXPRESS",
@@ -4650,22 +4649,26 @@ const IGN_LAYERS = {
         opacity: 0.7,
         attribution: "© IGN Géoportail",
       }
-    ),
+    ).addTo(map),
   },
   plu: {
     label: "Zones PLU",
-    layer: null,
-    make: (L) => L.tileLayer.wms(
-      "https://data.geopf.fr/wms-r/wms",
-      {
-        layers: "MS_ZONE_URBA",
-        format: "image/png",
-        transparent: true,
-        version: "1.3.0",
-        opacity: 0.6,
-        attribution: "© Géoportail de l'Urbanisme",
-      }
-    ),
+    make: async (L, map) => {
+      const resp = await fetch("https://apicarto.ign.fr/api/gpu/zone-urba?partition=DU_69086");
+      const data = await resp.json();
+      const pluColors = { U: "#FBBF24", AU: "#F97316", AUc: "#F97316", AUs: "#FDE68A", A: "#86EFAC", N: "#4ADE80" };
+      return L.geoJSON(data, {
+        style: (f) => {
+          const tz = f?.properties?.typezone || "";
+          const color = pluColors[tz] || pluColors[tz.slice(0, 2)] || "#94A3B8";
+          return { color: "#475569", weight: 1, fillColor: color, fillOpacity: 0.35 };
+        },
+        onEachFeature: (f, l) => {
+          const p = f.properties || {};
+          l.bindPopup(`<b>${p.libelle || p.typezone}</b><br><small>${p.typezone}</small>`);
+        },
+      }).addTo(map);
+    },
   },
 };
 
@@ -4779,7 +4782,7 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
     onFocused && onFocused();
   }, [focusDelib, leafletReady]);
 
-  const toggleLayer = (key) => {
+  const toggleLayer = async (key) => {
     const map = mapInstance.current;
     const L = window.L;
     if (!map || !L) return;
@@ -4791,9 +4794,8 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
       }
       setActiveLayers(prev => ({ ...prev, [key]: false }));
     } else {
-      const layer = IGN_LAYERS[key].make(L);
-      layer.addTo(map);
-      layerRefs.current[key] = layer;
+      const result = IGN_LAYERS[key].make(L, map);
+      layerRefs.current[key] = result instanceof Promise ? await result : result;
       setActiveLayers(prev => ({ ...prev, [key]: true }));
     }
   };
