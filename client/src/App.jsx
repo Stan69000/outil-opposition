@@ -406,7 +406,7 @@ function PdfSeanceAnalyzer({ pv, onDone }) {
 }
 
 // ── DELIB EXTRACTOR ───────────────────────────────────────────────────────────
-function DelibExtractor({ pv, onDone }) {
+function DelibExtractor({ pv, onDone, onGoToCarte }) {
   const t = useT();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState([]);
@@ -556,10 +556,19 @@ function DelibExtractor({ pv, onDone }) {
                       <div style={{ marginBottom: "10px", padding: "6px 10px",
                         background: t.primary + "18", borderRadius: "6px", borderLeft: `3px solid ${t.primary}` }}>
                         <span style={{ color: t.textMuted, fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Adresse concernée</span>
-                        <p style={{ color: t.text, fontSize: "12px", margin: "2px 0 0 0" }}>{d.adresse}</p>
-                        {hasGeo && (
-                          <p style={{ color: t.primary, fontSize: "11px", margin: "2px 0 0 0" }}>
-                            Géolocalisé — visible sur la carte urbanisme
+                        <p style={{ color: t.text, fontSize: "12px", margin: "2px 0 4px 0" }}>{d.adresse}</p>
+                        {hasGeo && onGoToCarte && (
+                          <button
+                            onClick={() => onGoToCarte(d)}
+                            style={{ fontSize: "11px", color: t.primary, background: "transparent",
+                              border: `1px solid ${t.primary}`, borderRadius: "4px",
+                              padding: "2px 8px", cursor: "pointer", fontWeight: 600 }}>
+                            Voir sur la carte →
+                          </button>
+                        )}
+                        {!hasGeo && (
+                          <p style={{ color: t.textMuted, fontSize: "11px", margin: 0, fontStyle: "italic" }}>
+                            Non géolocalisé
                           </p>
                         )}
                       </div>
@@ -1002,7 +1011,7 @@ function VeilleLegifrance({ lois, setLois }) {
 }
 
 // ── PROCÈS-VERBAUX ─────────────────────────────────────────────────────────────
-function ProcessVerbaux({ pvs, setPvs }) {
+function ProcessVerbaux({ pvs, setPvs, onGoToCarte }) {
   const t = useT();
   const [sel, setSel] = useState(null);
   const [aiPanel, setAiPanel] = useState(null);
@@ -1197,7 +1206,7 @@ function ProcessVerbaux({ pvs, setPvs }) {
                   )}
 
                   {pv.pdfs?.length > 0 && (
-                    <DelibExtractor pv={pv} onDone={() => {
+                    <DelibExtractor pv={pv} onGoToCarte={onGoToCarte} onDone={() => {
                       api.pvs.list().then(all => setPvs(all)).catch(() => {});
                     }} />
                   )}
@@ -4181,7 +4190,7 @@ const IGN_LAYERS = {
   },
 };
 
-function CarteUrbanisme({ pvs }) {
+function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
   const t = useT();
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
@@ -4273,10 +4282,23 @@ function CarteUrbanisme({ pvs }) {
             <small>${geo.adresse || d.adresse || ""}</small><br>
             ${d.statut === "Alerte" ? `<span style="color:#EF4444">⚠ ${d.anomalies?.[0] || "Anomalie"}</span>` : ""}
           `);
+        marker._deliberationId = d.id;
         delibMarkersRef.current.push(marker);
       } catch {}
     });
   }, [deliberations, leafletReady]);
+
+  // Focus sur une délibération spécifique (depuis l'onglet PV)
+  useEffect(() => {
+    if (!focusDelib || !mapInstance.current || !leafletReady) return;
+    try {
+      const geo = JSON.parse(focusDelib.geo);
+      mapInstance.current.setView([geo.lat, geo.lng], 17);
+      const target = delibMarkersRef.current.find(m => m._deliberationId === focusDelib.id);
+      if (target) target.openPopup();
+    } catch {}
+    onFocused && onFocused();
+  }, [focusDelib, leafletReady]);
 
   const toggleLayer = (key) => {
     const map = mapInstance.current;
@@ -4496,6 +4518,7 @@ function useWindowWidth() {
 // ── APP ────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState("dashboard");
+  const [focusDelib, setFocusDelib] = useState(null);
   const [lois, setLois] = useState([]);
   const [pvs, setPvs] = useState([]);
   const [failles, setFailles] = useState([]);
@@ -4565,7 +4588,7 @@ export default function App() {
     switch(tab) {
       case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} />;
       case "seance-live":   return <SeanceLive setPvs={setPvs} />;
-      case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} />;
+      case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} onGoToCarte={(d) => { setFocusDelib(d); setTab("carte"); }} />;
       case "questions":     return <QuestionsCADA />;
       case "agenda":        return <AgendaPrep />;
       case "failles":       return <Failles failles={failles} setFailles={setFailles} />;
@@ -4582,7 +4605,7 @@ export default function App() {
       case "journal":       return <JournalTerrain pvs={pvs} failles={failles} />;
       case "veille":        return <VeilleReglementaire />;
       case "stats-elus":    return <StatsElus />;
-      case "carte":         return <CarteUrbanisme pvs={pvs} />;
+      case "carte":         return <CarteUrbanisme pvs={pvs} focusDelib={focusDelib} onFocused={() => setFocusDelib(null)} />;
       default: return null;
     }
   };
