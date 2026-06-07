@@ -236,7 +236,16 @@ Retourne ce JSON valide uniquement :
 // GET /api/analyses/sync-log — historique des synchros automatiques
 router.get("/sync-log", (req, res) => {
   const logs = db.prepare("SELECT * FROM sync_log ORDER BY ran_at DESC LIMIT 20").all();
-  res.json(logs);
+  // Normaliser les noms de colonnes pour le frontend
+  res.json(logs.map(l => ({
+    id:        l.id,
+    ran_at:    l.ran_at,
+    imported:  l.seances_imported,
+    found:     l.seances_found,
+    triggered: l.triggered_by,
+    status:    l.error ? "error" : "ok",
+    error_msg: l.error || null,
+  })));
 });
 
 module.exports = router;
