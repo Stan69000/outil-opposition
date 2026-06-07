@@ -1,0 +1,30 @@
+{
+  "name": "Opposition Fleurieux",
+  "short_name": "Fleurieux",
+  "description": "Outil de veille et d'action pour l'opposition municipale de Fleurieux-sur-l'Arbresle",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F1117",
+  "theme_color": "#3B82F6",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Séance live",
+      "short_name": "Live",
+      "description": "Démarrer une séance en direct",
+      "url": "/?tab=seance-live",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Procès-verbaux",
+      "short_name": "PVs",
+      "url": "/?tab=pv",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
