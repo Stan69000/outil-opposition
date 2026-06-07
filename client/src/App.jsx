@@ -405,6 +405,220 @@ function PdfSeanceAnalyzer({ pv, onDone }) {
   );
 }
 
+// ── DELIB EXTRACTOR ───────────────────────────────────────────────────────────
+function DelibExtractor({ pv, onDone, onGoToCarte }) {
+  const t = useT();
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState([]);
+  const [extracting, setExtracting] = useState(false);
+  const [error, setError] = useState(null);
+  const [delibs, setDelibs] = useState([]);
+  const [expanded, setExpanded] = useState(null);
+  const abortRef = useRef(null);
+
+  useEffect(() => {
+    api.deliberations.bySeance(pv.id).then(setDelibs).catch(() => {});
+  }, [pv.id]);
+
+  const start = async () => {
+    setRunning(true); setProgress([]); setExtracting(true); setError(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await fetch(`/api/deliberations/extract/${pv.id}`, {
+        method: "POST",
+        signal: ctrl.signal,
+      });
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done: d, value } = await reader.read();
+        if (d) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt.type === "progress") setProgress(p => [...p, evt]);
+            if (evt.type === "result") setProgress(p => [
+              ...p.slice(0, -1),
+              { ...p[p.length - 1], objet: evt.delib.objet, is_urba: evt.delib.is_urba, geo: evt.delib.geo },
+            ]);
+            if (evt.type === "done") {
+              setExtracting(false);
+              api.deliberations.bySeance(pv.id).then(setDelibs).catch(() => {});
+              onDone && onDone();
+            }
+            if (evt.type === "error") setError(evt.message);
+          } catch {}
+        }
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") setError(e.message);
+    }
+    setRunning(false);
+  };
+
+  const stop = () => { abortRef.current?.abort(); setRunning(false); setExtracting(false); };
+
+  const RISQUE_COLOR = { Aucun: t.textMuted, Faible: t.success, Moyen: t.warning, Élevé: t.danger };
+
+  if (!pv.pdfs?.length) return null;
+
+  return (
+    <div style={{ marginBottom: "12px" }}>
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: (progress.length || delibs.length) ? "8px" : 0 }}>
+        <Btn onClick={running ? stop : start} variant={running ? "warning" : "outline"} size="sm" disabled={extracting && !running}>
+          {running ? "Arrêter" : delibs.length > 0 ? `Ré-extraire (${pv.pdfs.length})` : `Extraire ${pv.pdfs.length} délibération(s)`}
+        </Btn>
+        {running && <span style={{ color: t.textMuted, fontSize: "11px" }}>Extraction en cours…</span>}
+        {error && <span style={{ color: t.danger, fontSize: "11px" }}>Erreur : {error}</span>}
+      </div>
+
+      {running && progress.length > 0 && (
+        <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "6px",
+          padding: "8px 12px", maxHeight: "100px", overflowY: "auto", marginBottom: "8px" }}>
+          {progress.map((e, i) => (
+            <div key={i} style={{ fontSize: "11px", color: t.textSec, marginBottom: "2px",
+              display: "flex", gap: "8px", alignItems: "center" }}>
+              <span style={{ color: t.textMuted, flexShrink: 0 }}>[{e.current}/{e.total}]</span>
+              <span style={{ fontWeight: 600, flex: 1 }}>{e.objet || e.nom}</span>
+              {e.is_urba && <span style={{ color: t.primary, fontSize: "10px" }}>Urba</span>}
+              {e.geo && <span style={{ color: t.success, fontSize: "10px" }}>Géo</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {delibs.length > 0 && (
+        <div style={{ border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
+          {delibs.map((d, i) => {
+            const isExp = expanded === d.id;
+            const alertCount = d.anomalies?.length || 0;
+            const hasGeo = !!d.geo;
+            return (
+              <div key={d.id || i}>
+                <div
+                  onClick={() => setExpanded(isExp ? null : d.id)}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px",
+                    borderBottom: `1px solid ${t.border}`, cursor: "pointer",
+                    background: isExp ? t.surfaceAlt : "transparent",
+                    transition: "background 0.15s" }}>
+                  <span style={{ color: t.textMuted, fontSize: "10px", width: "20px", flexShrink: 0, fontWeight: 600 }}>
+                    {d.numero || i + 1}
+                  </span>
+                  <span style={{ fontSize: "12px", color: t.text, flex: 1, lineHeight: 1.3 }}>{d.objet}</span>
+                  <div style={{ display: "flex", gap: "5px", flexShrink: 0, alignItems: "center" }}>
+                    {d.is_urba && (
+                      <span style={{ fontSize: "10px", color: "#fff", background: t.primary,
+                        padding: "1px 6px", borderRadius: "10px", fontWeight: 600,
+                        cursor: hasGeo ? "pointer" : "default",
+                        title: hasGeo ? d.geo && JSON.parse(d.geo)?.adresse : d.adresse }}
+                        onClick={e => { e.stopPropagation(); setExpanded(isExp ? null : d.id); }}>
+                        Urba{hasGeo ? " ·" : ""}
+                      </span>
+                    )}
+                    {alertCount > 0 && (
+                      <span style={{ fontSize: "10px", color: "#fff", background: t.danger,
+                        padding: "1px 6px", borderRadius: "10px", fontWeight: 600, cursor: "pointer" }}
+                        onClick={e => { e.stopPropagation(); setExpanded(isExp ? null : d.id); }}>
+                        ⚠ {alertCount}
+                      </span>
+                    )}
+                    {d.pdf_url && (
+                      <a href={d.pdf_url} target="_blank" rel="noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        style={{ fontSize: "10px", color: t.primary, textDecoration: "none",
+                          padding: "1px 5px", border: `1px solid ${t.primary}44`, borderRadius: "4px" }}>
+                        PDF
+                      </a>
+                    )}
+                    <span style={{ color: t.textMuted, fontSize: "10px" }}>{isExp ? "▲" : "▼"}</span>
+                  </div>
+                </div>
+
+                {isExp && (
+                  <div style={{ padding: "12px 16px", background: t.surfaceAlt, borderBottom: `1px solid ${t.border}` }}
+                    onClick={e => e.stopPropagation()}>
+
+                    {(d.votes_pour > 0 || d.votes_contre > 0 || d.votes_abstention > 0) && (
+                      <div style={{ display: "flex", gap: "14px", marginBottom: "10px" }}>
+                        <span style={{ color: t.success, fontSize: "12px", fontWeight: 600 }}>✓ {d.votes_pour} pour</span>
+                        <span style={{ color: t.danger, fontSize: "12px", fontWeight: 600 }}>✗ {d.votes_contre} contre</span>
+                        <span style={{ color: t.warning, fontSize: "12px", fontWeight: 600 }}>○ {d.votes_abstention} abst.</span>
+                      </div>
+                    )}
+
+                    {d.is_urba && d.adresse && (
+                      <div style={{ marginBottom: "10px", padding: "6px 10px",
+                        background: t.primary + "18", borderRadius: "6px", borderLeft: `3px solid ${t.primary}` }}>
+                        <span style={{ color: t.textMuted, fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Adresse concernée</span>
+                        <p style={{ color: t.text, fontSize: "12px", margin: "2px 0 4px 0" }}>{d.adresse}</p>
+                        {hasGeo && onGoToCarte && (
+                          <button
+                            onClick={() => onGoToCarte(d)}
+                            style={{ fontSize: "11px", color: t.primary, background: "transparent",
+                              border: `1px solid ${t.primary}`, borderRadius: "4px",
+                              padding: "2px 8px", cursor: "pointer", fontWeight: 600 }}>
+                            Voir sur la carte →
+                          </button>
+                        )}
+                        {!hasGeo && (
+                          <p style={{ color: t.textMuted, fontSize: "11px", margin: 0, fontStyle: "italic" }}>
+                            Non géolocalisé
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {d.anomalies?.length > 0 && (
+                      <div style={{ marginBottom: "10px", padding: "8px 12px",
+                        background: t.dangerBg || t.danger + "18", borderRadius: "6px", borderLeft: `3px solid ${t.danger}` }}>
+                        <p style={{ color: t.danger, fontSize: "10px", fontWeight: 700, margin: "0 0 5px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          Anomalies détectées
+                        </p>
+                        {d.anomalies.map((a, ai) => (
+                          <p key={ai} style={{ color: t.danger, fontSize: "12px", margin: "2px 0" }}>• {a}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {d.points?.length > 0 && (
+                      <div style={{ marginBottom: "10px" }}>
+                        <p style={{ color: t.textMuted, fontSize: "10px", fontWeight: 600, margin: "0 0 4px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Points clés</p>
+                        {d.points.map((p, pi) => (
+                          <p key={pi} style={{ color: t.textSec, fontSize: "12px", margin: "2px 0" }}>· {p}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {d.action_opposition && (
+                      <div style={{ padding: "6px 10px", background: t.primary + "12",
+                        borderRadius: "6px", borderLeft: `3px solid ${t.primary}` }}>
+                        <p style={{ color: t.textMuted, fontSize: "10px", fontWeight: 600, margin: "0 0 3px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Action recommandée</p>
+                        <p style={{ color: t.text, fontSize: "12px", margin: 0, fontStyle: "italic" }}>{d.action_opposition}</p>
+                      </div>
+                    )}
+
+                    {d.risque_juridique && d.risque_juridique !== "Aucun" && (
+                      <p style={{ color: RISQUE_COLOR[d.risque_juridique] || t.textMuted, fontSize: "11px", margin: "8px 0 0 0", fontWeight: 600 }}>
+                        Risque juridique : {d.risque_juridique}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SYNC MAIRIE ────────────────────────────────────────────────────────────────
 function SyncMairie({ onImport }) {
   const t = useT();
@@ -797,7 +1011,7 @@ function VeilleLegifrance({ lois, setLois }) {
 }
 
 // ── PROCÈS-VERBAUX ─────────────────────────────────────────────────────────────
-function ProcessVerbaux({ pvs, setPvs }) {
+function ProcessVerbaux({ pvs, setPvs, onGoToCarte }) {
   const t = useT();
   const [sel, setSel] = useState(null);
   const [aiPanel, setAiPanel] = useState(null);
@@ -992,8 +1206,8 @@ function ProcessVerbaux({ pvs, setPvs }) {
                   )}
 
                   {pv.pdfs?.length > 0 && (
-                    <PdfSeanceAnalyzer pv={pv} onDone={() => {
-                      api.pvs.list().then(all => setPvs(all)).catch(()=>{});
+                    <DelibExtractor pv={pv} onGoToCarte={onGoToCarte} onDone={() => {
+                      api.pvs.list().then(all => setPvs(all)).catch(() => {});
                     }} />
                   )}
 
@@ -3943,16 +4157,53 @@ function VeilleReglementaire() {
 }
 
 // ── CARTE URBANISME ───────────────────────────────────────────────────────────
-function CarteUrbanisme({ pvs }) {
+const IGN_LAYERS = {
+  cadastre: {
+    label: "Cadastre",
+    layer: null,
+    make: (L) => L.tileLayer.wms(
+      "https://data.geopf.fr/wms-r/wms",
+      {
+        layers: "CADASTRALPARCELS.PARCELLAIRE_EXPRESS",
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        opacity: 0.7,
+        attribution: "© IGN Géoportail",
+      }
+    ),
+  },
+  plu: {
+    label: "Zones PLU",
+    layer: null,
+    make: (L) => L.tileLayer.wms(
+      "https://data.geopf.fr/wms-r/wms",
+      {
+        layers: "MS_ZONE_URBA",
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        opacity: 0.6,
+        attribution: "© Géoportail de l'Urbanisme",
+      }
+    ),
+  },
+};
+
+function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
   const t = useT();
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const markersRef = useRef([]);
+  const layerRefs = useRef({});
   const [leafletReady, setLeafletReady] = useState(false);
   const [selectedPv, setSelectedPv] = useState(null);
   const [geoForm, setGeoForm] = useState({ pvId: 0, lat: "", lng: "", adresse: "" });
   const [geocoding, setGeocoding] = useState(false);
   const [pvGeos, setPvGeos] = useState([]);
+  const [activeLayers, setActiveLayers] = useState({ cadastre: false, plu: false });
+  const [deliberations, setDeliberations] = useState([]);
+  const delibMarkersRef = useRef([]);
 
   const pvUrba = pvs.filter(p =>
     p.objet?.toLowerCase().includes("plu") ||
@@ -3962,6 +4213,12 @@ function CarteUrbanisme({ pvs }) {
     p.objet?.toLowerCase().includes("permis") ||
     p.geo
   );
+
+  useEffect(() => {
+    api.deliberations.list().then(all => {
+      setDeliberations(all.filter(d => d.is_urba && d.geo));
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     import("leaflet").then(L => {
@@ -4002,6 +4259,66 @@ function CarteUrbanisme({ pvs }) {
     setPvGeos(geoData);
   }, [leafletReady, pvs]);
 
+  // Marqueurs délibérations urbanisme extraites
+  useEffect(() => {
+    const map = mapInstance.current;
+    const L = window.L;
+    if (!map || !L || !leafletReady) return;
+
+    delibMarkersRef.current.forEach(m => map.removeLayer(m));
+    delibMarkersRef.current = [];
+
+    deliberations.forEach(d => {
+      try {
+        const geo = JSON.parse(d.geo);
+        const color = d.statut === "Alerte" ? "#EF4444" : "#8B5CF6";
+        const marker = L.circleMarker([geo.lat, geo.lng], {
+          radius: 8, color, fillColor: color, fillOpacity: 0.85,
+          dashArray: d.statut === "Alerte" ? "4" : null,
+        })
+          .addTo(map)
+          .bindPopup(`
+            <b>${d.objet}</b><br>
+            <small>${geo.adresse || d.adresse || ""}</small><br>
+            ${d.statut === "Alerte" ? `<span style="color:#EF4444">⚠ ${d.anomalies?.[0] || "Anomalie"}</span>` : ""}
+          `);
+        marker._deliberationId = d.id;
+        delibMarkersRef.current.push(marker);
+      } catch {}
+    });
+  }, [deliberations, leafletReady]);
+
+  // Focus sur une délibération spécifique (depuis l'onglet PV)
+  useEffect(() => {
+    if (!focusDelib || !mapInstance.current || !leafletReady) return;
+    try {
+      const geo = JSON.parse(focusDelib.geo);
+      mapInstance.current.setView([geo.lat, geo.lng], 17);
+      const target = delibMarkersRef.current.find(m => m._deliberationId === focusDelib.id);
+      if (target) target.openPopup();
+    } catch {}
+    onFocused && onFocused();
+  }, [focusDelib, leafletReady]);
+
+  const toggleLayer = (key) => {
+    const map = mapInstance.current;
+    const L = window.L;
+    if (!map || !L) return;
+
+    if (activeLayers[key]) {
+      if (layerRefs.current[key]) {
+        map.removeLayer(layerRefs.current[key]);
+        layerRefs.current[key] = null;
+      }
+      setActiveLayers(prev => ({ ...prev, [key]: false }));
+    } else {
+      const layer = IGN_LAYERS[key].make(L);
+      layer.addTo(map);
+      layerRefs.current[key] = layer;
+      setActiveLayers(prev => ({ ...prev, [key]: true }));
+    }
+  };
+
   const geocodeAdresse = async () => {
     if (!geoForm.adresse) return;
     setGeocoding(true);
@@ -4020,9 +4337,23 @@ function CarteUrbanisme({ pvs }) {
 
   const saveGeo = async () => {
     if (!geoForm.pvId || !geoForm.lat || !geoForm.lng) return;
-    const geo = JSON.stringify({ lat: +geoForm.lat, lng: +geoForm.lng, adresse: geoForm.adresse });
-    await api.pvs.update(geoForm.pvId, { geo });
-    alert("Position enregistrée. Rechargez la carte pour voir le marqueur.");
+    const geoJson = JSON.stringify({ lat: +geoForm.lat, lng: +geoForm.lng, adresse: geoForm.adresse });
+    const updated = await api.pvs.update(geoForm.pvId, { geo: geoJson });
+
+    // Ajouter le marqueur sans recharger
+    if (mapInstance.current && updated) {
+      const L = window.L;
+      const geo = JSON.parse(geoJson);
+      const pv = pvUrba.find(p => p.id === geoForm.pvId);
+      const color = pv?.statut === "Alerte" ? "#EF4444" : pv?.statut === "Analysé" ? "#3B82F6" : "#22C55E";
+      const marker = L.circleMarker([geo.lat, geo.lng], { radius: 10, color, fillColor: color, fillOpacity: 0.7 })
+        .addTo(mapInstance.current)
+        .bindPopup(`<b>${pv?.date}</b><br>${pv?.objet}<br><small>${geo.adresse || ""}</small>`);
+      markersRef.current.push(marker);
+      mapInstance.current.setView([geo.lat, geo.lng], 16);
+      setPvGeos(prev => [...prev, { pv: { ...pv, geo: geoJson }, geo }]);
+    }
+
     setGeoForm({ pvId: 0, lat: "", lng: "", adresse: "" });
   };
 
@@ -4034,11 +4365,22 @@ function CarteUrbanisme({ pvs }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: "16px", alignItems: "start" }}>
         <div>
+          {leafletReady && (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              {Object.entries(IGN_LAYERS).map(([key, cfg]) => (
+                <Btn key={key} size="sm"
+                  variant={activeLayers[key] ? "primary" : "ghost"}
+                  onClick={() => toggleLayer(key)}>
+                  {cfg.label}
+                </Btn>
+              ))}
+            </div>
+          )}
           {!leafletReady && <Spinner label="Chargement de la carte…" />}
           <div ref={mapRef} style={{ height: "500px", borderRadius: "10px", border: `1px solid ${t.border}`,
             display: leafletReady ? "block" : "none" }} />
           <p style={{ color: t.textMuted, fontSize: "11px", marginTop: "6px" }}>
-            Fond de carte : OpenStreetMap · Géocodage : data.gouv.fr (API Adresse)
+            Fond de carte : OpenStreetMap · Cadastre & PLU : IGN Géoportail · Géocodage : data.gouv.fr
           </p>
         </div>
 
@@ -4072,22 +4414,419 @@ function CarteUrbanisme({ pvs }) {
 
           <Card>
             <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, margin: "0 0 10px 0",
-              textTransform: "uppercase" }}>PVs urbanisme</p>
+              textTransform: "uppercase" }}>
+              Délibérations urbanisme
+              {deliberations.length > 0 && (
+                <span style={{ marginLeft: "6px", color: t.primary, fontWeight: 700 }}>
+                  {deliberations.length} géolocalisée(s)
+                </span>
+              )}
+            </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "5px", maxHeight: "300px", overflowY: "auto" }}>
-              {pvUrba.map(p => (
-                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+              {deliberations.map(d => (
+                <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
                   padding: "6px 8px", background: t.surfaceAlt, borderRadius: "6px" }}>
                   <span style={{ color: t.textSec, fontSize: "11px", flex: 1, paddingRight: "8px" }}>
-                    {p.date} — {p.objet.slice(0, 30)}
+                    {d.objet.slice(0, 35)}
                   </span>
                   <div style={{ width: "8px", height: "8px", borderRadius: "50%",
-                    background: p.geo ? t.success : t.textMuted, flexShrink: 0 }} />
+                    background: d.statut === "Alerte" ? t.danger : "#8B5CF6", flexShrink: 0 }} />
                 </div>
               ))}
-              {pvUrba.length === 0 && <p style={{ color: t.textMuted, fontSize: "12px" }}>Aucun PV d'urbanisme.</p>}
+              {deliberations.length === 0 && (
+                <p style={{ color: t.textMuted, fontSize: "12px" }}>
+                  Aucune délibération urbanisme géolocalisée.<br />
+                  Utilisez "Extraire les délibérations" dans les PVs.
+                </p>
+              )}
             </div>
           </Card>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ACCUEIL ───────────────────────────────────────────────────────────────────
+function WelcomeScreen({ onEnter, setTab }) {
+  const t = useT();
+
+  const MODULES = [
+    {
+      label: "Séances",
+      color: t.purple,
+      items: [
+        { id:"seance-live", icon:"●", label:"Séance live",    desc:"Prise de notes en temps réel, détection d'anomalies à chaud" },
+        { id:"pv",          icon:"≡", label:"Procès-verbaux", desc:"Gestion des séances, analyse IA des PDFs, extraction délibérations" },
+        { id:"historique",  icon:"⌛",label:"Historique",     desc:"Frise chronologique complète de toutes les séances" },
+      ],
+    },
+    {
+      label: "Action juridique",
+      color: t.danger,
+      items: [
+        { id:"failles",       icon:"!", label:"Failles",          desc:"Irrégularités légales classées par gravité avec stratégie juridique IA" },
+        { id:"questions",     icon:"?", label:"Questions & CADA",  desc:"Questions écrites et demandes de documents au titre de la loi CADA" },
+        { id:"jurisprudence", icon:"=", label:"Jurisprudence",     desc:"Décisions du TA Lyon et juridictions administratives pertinentes" },
+        { id:"legifrance",    icon:"§", label:"Légifrance",        desc:"Recherche dans les codes et textes applicables aux communes" },
+      ],
+    },
+    {
+      label: "Rédaction",
+      color: t.primary,
+      items: [
+        { id:"modeles",   icon:"□", label:"Modèles",   desc:"Bibliothèque de modèles de courriers juridiques prêts à l'emploi" },
+        { id:"courriers", icon:"✉", label:"Courriers", desc:"Rédaction et suivi des courriers envoyés (préfet, maire, CADA…)" },
+      ],
+    },
+    {
+      label: "Suivi",
+      color: t.success,
+      items: [
+        { id:"engagements", icon:"◎", label:"Engagements",    desc:"Suivi des engagements pris en séance par la majorité" },
+        { id:"journal",     icon:"✎", label:"Journal terrain", desc:"Notes personnelles et compte-rendu de terrain" },
+        { id:"veille",      icon:"◉", label:"Veille régl.",   desc:"Alertes sur les nouveaux textes législatifs applicables" },
+      ],
+    },
+    {
+      label: "Analyses",
+      color: t.warning,
+      items: [
+        { id:"analyses",   icon:"◈", label:"Analyses IA",     desc:"Bilans légaux, questions automatiques, rapports citoyens par IA" },
+        { id:"stats-elus", icon:"∑", label:"Stats élus",      desc:"Présences, votes et comportement par élu sur toute la mandature" },
+        { id:"agenda",     icon:"+", label:"Agenda",          desc:"Prédiction et préparation de l'ordre du jour à venir" },
+        { id:"carte",      icon:"⊕", label:"Carte urbanisme", desc:"Géolocalisation des délibérations d'urbanisme sur fond cadastral" },
+      ],
+    },
+    {
+      label: "Données",
+      color: t.textMuted,
+      items: [
+        { id:"scraper", icon:"↻", label:"Sync Mairie",    desc:"Import automatique des délibérations depuis le site officiel de la mairie" },
+        { id:"config",  icon:"⚙", label:"Configuration",  desc:"Clé API Claude, notifications push, paramètres de l'application" },
+      ],
+    },
+  ];
+
+  return (
+    <div style={{ minHeight:"100vh", width:"100%", background:t.bg, display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"flex-start", padding:"40px 20px 60px",
+      fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif", boxSizing:"border-box" }}>
+
+      {/* En-tête */}
+      <div style={{ textAlign:"center", marginBottom:"40px", maxWidth:"600px", width:"100%", margin:"0 auto 40px" }}>
+        <div style={{ width:"56px", height:"56px", background:t.primaryBg,
+          border:`2px solid ${t.primary}`, borderRadius:"14px",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          color:t.primary, fontSize:"26px", fontWeight:700,
+          margin:"0 auto 20px" }}>⬡</div>
+        <h1 style={{ color:t.text, fontSize:"28px", fontWeight:700, margin:"0 0 8px 0", lineHeight:1.2 }}>
+          Bienvenue, conseiller de l'opposition
+        </h1>
+        <p style={{ color:t.textSec, fontSize:"15px", margin:"0 0 6px 0" }}>
+          Plateforme de veille municipale — {COMMUNE.nom} ({COMMUNE.cp})
+        </p>
+        <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>
+          Mandature en cours · Maire : {CONSEIL.maire}
+        </p>
+      </div>
+
+      {/* Infographie fonctionnalités */}
+      <div style={{ width:"100%", maxWidth:"1060px", marginBottom:"40px", margin:"0 auto 40px" }}>
+        <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+          letterSpacing:"0.08em", textAlign:"center", marginBottom:"20px" }}>
+          Fonctionnalités disponibles
+        </p>
+        <div style={{ display:"flex", gap:"14px", alignItems:"flex-start" }}>
+          {[0, 1, 2].map(colIdx => (
+            <div key={colIdx} style={{ flex:"1 1 0", minWidth:0, display:"flex", flexDirection:"column", gap:"14px" }}>
+              {MODULES.filter((_, i) => i % 3 === colIdx).map(group => (
+                <div key={group.label} style={{ background:t.surface, border:`1px solid ${t.border}`,
+                  borderRadius:"10px", padding:"16px", borderTop:`3px solid ${group.color}` }}>
+                  <p style={{ color:group.color, fontSize:"10px", fontWeight:700,
+                    textTransform:"uppercase", letterSpacing:"0.08em", margin:"0 0 12px 0" }}>
+                    {group.label}
+                  </p>
+                  <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
+                    {group.items.map(item => (
+                      <div key={item.id}
+                        onClick={() => { onEnter(); setTab(item.id); }}
+                        style={{ display:"flex", gap:"10px", alignItems:"flex-start",
+                          padding:"8px 10px", borderRadius:"7px", cursor:"pointer",
+                          background:t.surfaceAlt, border:`1px solid transparent`,
+                          transition:"border-color 0.12s" }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor = t.borderMid}
+                        onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}>
+                        <span style={{ color:group.color, fontSize:"15px", width:"20px",
+                          flexShrink:0, textAlign:"center", lineHeight:1.4 }}>{item.icon}</span>
+                        <div>
+                          <p style={{ color:t.text, fontSize:"13px", fontWeight:600, margin:"0 0 2px 0" }}>
+                            {item.label}
+                          </p>
+                          <p style={{ color:t.textMuted, fontSize:"11px", margin:0, lineHeight:1.4 }}>
+                            {item.desc}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* CTA */}
+      <div style={{ display:"flex", gap:"12px", alignItems:"center" }}>
+        <button onClick={onEnter} style={{
+          background:t.primary, border:"none", color:"#fff",
+          padding:"13px 32px", borderRadius:"8px", fontSize:"14px", fontWeight:700,
+          cursor:"pointer", fontFamily:"inherit" }}>
+          Accéder au tableau de bord
+        </button>
+        <button onClick={() => { onEnter(); setTab("aide"); }} style={{
+          background:"transparent", border:`1px solid ${t.border}`, color:t.textSec,
+          padding:"13px 20px", borderRadius:"8px", fontSize:"13px", fontWeight:500,
+          cursor:"pointer", fontFamily:"inherit" }}>
+          Voir l'aide
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── AIDE ──────────────────────────────────────────────────────────────────────
+function HelpPage({ setTab }) {
+  const t = useT();
+
+  const SECTIONS = [
+    {
+      label: "Séances",
+      color: t.purple,
+      items: [
+        {
+          icon:"⬡", id:"dashboard", label:"Tableau de bord",
+          desc:"Vue synthétique de l'activité : compteurs (textes surveillés, séances, failles ouvertes), alertes actives et dernières séances importées.",
+          usages:["Vérifier les alertes au lancement","Accéder rapidement à une section depuis les stats"],
+          tips:["Les badges rouges/orange en haut signalent des délais de recours urgents (<10j)"],
+        },
+        {
+          icon:"●", id:"seance-live", label:"Séance live",
+          desc:"Outil de prise de notes en temps réel pendant une séance du conseil. Permet d'enregistrer les votes, anomalies et interventions au fil de la séance.",
+          usages:["Saisir les délibérations et votes pendant la séance","Signaler une anomalie de procédure en direct","Générer un compte-rendu automatique après la séance"],
+          tips:["Ouvrez sur mobile pendant la séance pour saisir en direct","Les anomalies saisies ici remontent dans Failles automatiquement"],
+        },
+        {
+          icon:"≡", id:"pv", label:"Procès-verbaux",
+          desc:"Gestion complète des séances enregistrées. Affiche les PDFs des délibérations, permet l'analyse IA de chaque séance et l'extraction individuelle des délibérations avec géolocalisation.",
+          usages:["Analyser un PV avec l'IA pour détecter des irrégularités","Extraire les délibérations d'une séance pour les visualiser sur la carte","Consulter les délais de recours gracieux par séance"],
+          tips:["Cliquez sur 'Extraire' pour obtenir les délibérations individuelles avec votes et anomalies","Le badge 'Auto' indique une séance importée depuis le site de la mairie","Les délais recours apparaissent en rouge quand il reste moins de 10 jours"],
+        },
+        {
+          icon:"⌛", id:"historique", label:"Historique",
+          desc:"Frise chronologique et statistiques consolidées de l'ensemble des séances. Vue d'ensemble sur la mandature.",
+          usages:["Retrouver une séance par date ou objet","Analyser les tendances de vote sur la durée"],
+          tips:["Utilisez les filtres par année pour affiner la recherche"],
+        },
+      ],
+    },
+    {
+      label: "Action juridique",
+      color: t.danger,
+      items: [
+        {
+          icon:"!", id:"failles", label:"Failles & Irrégularités",
+          desc:"Registre des irrégularités légales détectées, classées par gravité (Haute / Moyenne / Basse). Chaque faille inclut une description, la base légale, le statut de traitement et un conseil d'action.",
+          usages:["Consulter les failles ouvertes pour prioriser les actions","Demander une stratégie juridique IA sur une faille","Marquer une faille 'En cours' ou 'Résolue' au fil du suivi"],
+          tips:["L'IA peut rédiger une stratégie de recours complète (délais, instances, procédure) pour chaque faille","Les failles Haute gravité peuvent être transmises au Préfet via 'Analyses IA > Lettre au Préfet'"],
+        },
+        {
+          icon:"?", id:"questions", label:"Questions & CADA",
+          desc:"Outil de rédaction de questions écrites au maire et de demandes de documents au titre de la loi CADA (Commission d'Accès aux Documents Administratifs).",
+          usages:["Rédiger une question écrite sur une délibération contestée","Demander l'accès à un document administratif (CADA)","Suivre l'état des demandes (en attente, répondu, contesté)"],
+          tips:["La CADA permet d'obtenir n'importe quel document administratif non nominatif","Une demande sans réponse sous 1 mois vaut refus implicite — vous pouvez saisir la CADA"],
+        },
+        {
+          icon:"=", id:"jurisprudence", label:"Jurisprudence",
+          desc:"Recherche de décisions de justice pertinentes pour les communes de la région (TA Lyon, CAA Lyon, Conseil d'État). Résultats enrichis avec analyse de pertinence pour Fleurieux.",
+          usages:["Trouver une décision appuyant un recours","Vérifier si un type d'irrégularité a déjà été sanctionné","Obtenir la référence exacte pour une question orale"],
+          tips:["Essayez les raccourcis prédéfinis (Convocation CM, PLU, Droits opposition…)","Si le scraping échoue, les résultats IA sont une bonne alternative"],
+        },
+        {
+          icon:"§", id:"legifrance", label:"Légifrance",
+          desc:"Accès aux codes consolidés, décrets et textes officiels applicables aux communes, via l'API PISTE ou l'IA Claude en fallback.",
+          usages:["Retrouver l'article exact du CGCT applicable","Vérifier si un texte est en vigueur","Surveiller un texte pour être alerté de ses évolutions"],
+          tips:["Cliquez '+ Surveiller' pour ajouter un texte à votre veille active","Si PISTE n'est pas souscrit, l'IA Claude répond avec les textes pertinents"],
+        },
+      ],
+    },
+    {
+      label: "Rédaction",
+      color: t.primary,
+      items: [
+        {
+          icon:"□", id:"modeles", label:"Modèles",
+          desc:"Bibliothèque de modèles de courriers juridiques : lettres au Préfet, demandes CADA, recours gracieux, questions écrites. Génération IA sur mesure.",
+          usages:["Partir d'un modèle pour rédiger un courrier officiel","Générer un modèle IA adapté au contexte d'une faille","Créer et sauvegarder vos propres modèles"],
+          tips:["Le générateur IA prend en compte le contexte communal (Fleurieux, Rhône, préfet compétent)"],
+        },
+        {
+          icon:"✉", id:"courriers", label:"Courriers",
+          desc:"Registre des courriers envoyés ou à envoyer. Suivi du statut (rédigé, envoyé, répondu) avec historique complet.",
+          usages:["Suivre les courriers sans réponse","Retrouver le texte d'un courrier précédemment envoyé","Exporter un courrier au format imprimable"],
+          tips:["Liez un courrier à une faille pour un suivi cohérent des actions"],
+        },
+      ],
+    },
+    {
+      label: "Suivi",
+      color: t.success,
+      items: [
+        {
+          icon:"◎", id:"engagements", label:"Engagements",
+          desc:"Registre des engagements pris en séance par la majorité (maire et adjoints). Suivi de l'avancement, alertes sur les engagements non tenus.",
+          usages:["Enregistrer un engagement pris en séance","Vérifier les engagements non tenus pour interpellation","Consulter l'historique des promesses par élu"],
+          tips:["Liez chaque engagement à la séance source pour conserver la traçabilité"],
+        },
+        {
+          icon:"✎", id:"journal", label:"Journal terrain",
+          desc:"Journal de bord personnel pour noter observations, informations de terrain, contacts et éléments non officiels à ne pas oublier.",
+          usages:["Consigner un échange informel avec un habitant","Mémoriser une observation sur un chantier communal","Préparer ses notes avant une séance"],
+          tips:["Ces notes sont privées et ne sont pas synchronisées avec les données officielles"],
+        },
+        {
+          icon:"◉", id:"veille", label:"Veille réglementaire",
+          desc:"Alertes automatiques sur les nouveaux textes législatifs, décrets et circulaires impactant les communes de moins de 5 000 habitants.",
+          usages:["Être alerté des nouvelles lois avant leur application","Anticiper les obligations réglementaires nouvelles","Consulter le calendrier des échéances légales"],
+          tips:["La veille est filtrée pour ne retenir que les textes pertinents pour une commune rurale"],
+        },
+      ],
+    },
+    {
+      label: "Analyses",
+      color: t.warning,
+      items: [
+        {
+          icon:"◈", id:"analyses", label:"Analyses IA",
+          desc:"Moteur d'analyse IA contextuel : bilan de légalité, questions pour la prochaine séance, rapport citoyen, analyse PLU/ZAN, audit budget, lettre au Préfet.",
+          usages:["Générer 8 questions pour la prochaine séance en un clic","Produire un rapport accessible pour les habitants","Rédiger une lettre au Préfet sur les irrégularités les plus graves"],
+          tips:["Les analyses utilisent toutes les données de la plateforme (PV, failles, délibérations)","Le rapport citoyen peut être publié sur les réseaux ou distribué en tract"],
+        },
+        {
+          icon:"∑", id:"stats-elus", label:"Stats élus",
+          desc:"Statistiques individuelles par élu : taux de présence aux séances, comportement de vote (pour/contre/abstention), évolution dans le temps.",
+          usages:["Identifier un élu souvent absent pour interpellation","Analyser les votes dissidents au sein de la majorité","Préparer un argumentaire sur la transparence démocratique"],
+          tips:["Les stats sont calculées automatiquement à partir des PV importés"],
+        },
+        {
+          icon:"+", id:"agenda", label:"Agenda",
+          desc:"Préparation et prédiction des ordres du jour à venir, avec benchmark financier des communes comparables et suivi de l'agenda officiel.",
+          usages:["Anticiper les sujets du prochain conseil","Comparer les dépenses communales avec d'autres communes du Rhône","Préparer des questions sur les finances avant le vote du budget"],
+          tips:["La prédiction IA s'appuie sur les récurrences observées dans les PV passés"],
+        },
+        {
+          icon:"⊕", id:"carte", label:"Carte urbanisme",
+          desc:"Carte interactive avec cadastre et couches PLU. Visualisation géographique des délibérations d'urbanisme extraites des PV, avec centrage automatique sur chaque parcelle.",
+          usages:["Localiser une délibération de permis de construire","Vérifier la cohérence d'une décision avec le PLU","Identifier des évolutions du tissu urbain dans le temps"],
+          tips:["Cliquez 'Voir sur la carte' depuis une délibération pour centrer la vue automatiquement","Les couches IGN (orthophoto, cadastre, PLU) sont activables indépendamment"],
+        },
+      ],
+    },
+    {
+      label: "Données",
+      color: t.textMuted,
+      items: [
+        {
+          icon:"↻", id:"scraper", label:"Sync Mairie",
+          desc:"Import automatique des délibérations depuis le site officiel de la mairie de Fleurieux. Synchronisation hebdomadaire automatique (lundi 8h) ou manuelle à la demande.",
+          usages:["Importer les dernières séances en un clic","Vérifier le journal des synchronisations automatiques","Consulter la composition du conseil municipal"],
+          tips:["La synchronisation auto s'exécute chaque lundi — vérifiez le journal si vous suspectez une mise à jour manquée","Les PDFs des délibérations sont téléchargés et liés automatiquement à chaque séance"],
+        },
+        {
+          icon:"⚙", id:"config", label:"Configuration",
+          desc:"Paramètres de l'application : clé API Claude pour les analyses IA, notifications push, réglages de l'interface.",
+          usages:["Saisir la clé API Claude pour activer les analyses IA","Activer les notifications push pour les alertes urgentes"],
+          tips:["Sans clé API, les fonctions d'analyse IA et de recherche Légifrance sont désactivées","La clé est stockée localement et n'est jamais transmise à des tiers"],
+        },
+      ],
+    },
+  ];
+
+  return (
+    <div style={{ maxWidth:"900px" }}>
+      <div style={{ marginBottom:"28px" }}>
+        <h2 style={{ color:t.text, fontSize:"22px", fontWeight:700, margin:"0 0 4px 0" }}>
+          Aide & Documentation
+        </h2>
+        <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>
+          Guide complet des fonctionnalités — Opposition Municipale Fleurieux
+        </p>
+      </div>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:"24px" }}>
+        {SECTIONS.map(section => (
+          <div key={section.label}>
+            <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"14px",
+              paddingBottom:"8px", borderBottom:`2px solid ${section.color}33` }}>
+              <div style={{ width:"4px", height:"20px", background:section.color, borderRadius:"2px" }} />
+              <h3 style={{ color:section.color, fontSize:"13px", fontWeight:700,
+                textTransform:"uppercase", letterSpacing:"0.08em", margin:0 }}>
+                {section.label}
+              </h3>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+              {section.items.map(item => (
+                <div key={item.id} style={{ background:t.surface, border:`1px solid ${t.border}`,
+                  borderRadius:"10px", padding:"18px", borderLeft:`3px solid ${section.color}` }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"10px" }}>
+                    <span style={{ color:section.color, fontSize:"16px", width:"22px",
+                      textAlign:"center", flexShrink:0 }}>{item.icon}</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:"10px", flex:1 }}>
+                      <h4 style={{ color:t.text, fontSize:"15px", fontWeight:700, margin:0 }}>
+                        {item.label}
+                      </h4>
+                      <button onClick={() => setTab(item.id)} style={{
+                        background:"transparent", border:`1px solid ${t.border}`,
+                        color:t.primary, fontSize:"11px", padding:"2px 9px", borderRadius:"4px",
+                        cursor:"pointer", fontFamily:"inherit", fontWeight:500 }}>
+                        Ouvrir →
+                      </button>
+                    </div>
+                  </div>
+                  <p style={{ color:t.textSec, fontSize:"13px", lineHeight:"1.6", margin:"0 0 12px 0" }}>
+                    {item.desc}
+                  </p>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px" }}>
+                    <div>
+                      <p style={{ color:t.textMuted, fontSize:"10px", fontWeight:700, margin:"0 0 6px 0",
+                        textTransform:"uppercase", letterSpacing:"0.06em" }}>Cas d'usage</p>
+                      {item.usages.map((u, i) => (
+                        <p key={i} style={{ color:t.textSec, fontSize:"12px", margin:"0 0 3px 0",
+                          display:"flex", gap:"6px" }}>
+                          <span style={{ color:section.color, flexShrink:0 }}>·</span>{u}
+                        </p>
+                      ))}
+                    </div>
+                    {item.tips.length > 0 && (
+                      <div style={{ background:t.surfaceAlt, border:`1px solid ${t.border}`,
+                        borderRadius:"7px", padding:"10px 12px" }}>
+                        <p style={{ color:t.textMuted, fontSize:"10px", fontWeight:700, margin:"0 0 6px 0",
+                          textTransform:"uppercase", letterSpacing:"0.06em" }}>Tips</p>
+                        {item.tips.map((tip, i) => (
+                          <p key={i} style={{ color:t.textMuted, fontSize:"11px", margin:"0 0 4px 0",
+                            lineHeight:"1.5", display:"flex", gap:"6px" }}>
+                            <span style={{ flexShrink:0 }}>→</span>{tip}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -4143,6 +4882,7 @@ const NAV_GROUPS = [
       { id:"scraper",      label:"Sync Mairie",     icon:"↻" },
       { id:"config",       label:"Configuration",   icon:"⚙" },
       { id:"admin",        label:"Admin",           icon:"$" },
+      { id:"aide",         label:"Aide",            icon:"?" },
     ],
   },
 ];
@@ -4163,7 +4903,8 @@ function useWindowWidth() {
 
 // ── APP ────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState("accueil");
+  const [focusDelib, setFocusDelib] = useState(null);
   const [lois, setLois] = useState([]);
   const [pvs, setPvs] = useState([]);
   const [failles, setFailles] = useState([]);
@@ -4231,9 +4972,11 @@ export default function App() {
       </div>
     );
     switch(tab) {
+      case "accueil":       return null;
+      case "aide":          return <HelpPage setTab={setTab} />;
       case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} />;
       case "seance-live":   return <SeanceLive setPvs={setPvs} />;
-      case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} />;
+      case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} onGoToCarte={(d) => { setFocusDelib(d); setTab("carte"); }} />;
       case "questions":     return <QuestionsCADA />;
       case "agenda":        return <AgendaPrep />;
       case "failles":       return <Failles failles={failles} setFailles={setFailles} />;
@@ -4250,7 +4993,7 @@ export default function App() {
       case "journal":       return <JournalTerrain pvs={pvs} failles={failles} />;
       case "veille":        return <VeilleReglementaire />;
       case "stats-elus":    return <StatsElus />;
-      case "carte":         return <CarteUrbanisme pvs={pvs} />;
+      case "carte":         return <CarteUrbanisme pvs={pvs} focusDelib={focusDelib} onFocused={() => setFocusDelib(null)} />;
       default: return null;
     }
   };
@@ -4350,6 +5093,21 @@ export default function App() {
       ))}
     </div>
   );
+
+  // ── ÉCRAN D'ACCUEIL ─────────────────────────────────────────────────────────
+  if (tab === "accueil") {
+    return (
+      <ThemeCtx.Provider value={theme}>
+        <style>{`
+          * { box-sizing:border-box; margin:0; padding:0; }
+          @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+          input::placeholder, textarea::placeholder { color:${theme.textMuted}; }
+          input, textarea, button, select { outline:none; }
+        `}</style>
+        <WelcomeScreen onEnter={() => setTab("dashboard")} setTab={setTab} />
+      </ThemeCtx.Provider>
+    );
+  }
 
   // ── DESKTOP LAYOUT ──────────────────────────────────────────────────────────
   if (isDesktop) {

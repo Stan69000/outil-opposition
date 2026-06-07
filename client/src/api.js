@@ -135,6 +135,11 @@ export const api = {
     update:   (id, data) => req("PUT",    `/journal/${id}`, data),
     remove:   (id)       => req("DELETE", `/journal/${id}`),
   },
+  deliberations: {
+    list:    ()         => req("GET", "/deliberations"),
+    bySeance:(pvId)    => req("GET", `/deliberations/seance/${pvId}`),
+    update:  (id, data) => req("PUT", `/deliberations/${id}`, data),
+  },
   veille: {
     list:        ()    => req("GET",  "/veille"),
     unreadCount: ()    => req("GET",  "/veille/unread-count"),

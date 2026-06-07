@@ -252,6 +252,31 @@ for (const sql of [
   "ALTER TABLE pvs ADD COLUMN geo TEXT DEFAULT ''",
 ]) { try { db.prepare(sql).run(); } catch (_) {} }
 
+// Table délibérations individuelles (1 par PDF de séance)
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS deliberations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    seance_id INTEGER NOT NULL REFERENCES pvs(id),
+    numero TEXT DEFAULT '',
+    objet TEXT NOT NULL,
+    pdf_url TEXT DEFAULT '',
+    pdf_nom TEXT DEFAULT '',
+    pdf_text TEXT DEFAULT '',
+    statut TEXT DEFAULT 'Importé',
+    votes_pour INTEGER DEFAULT 0,
+    votes_contre INTEGER DEFAULT 0,
+    votes_abstention INTEGER DEFAULT 0,
+    anomalies TEXT DEFAULT '[]',
+    points TEXT DEFAULT '[]',
+    risque_juridique TEXT DEFAULT 'Aucun',
+    action_opposition TEXT DEFAULT '',
+    is_urba INTEGER DEFAULT 0,
+    adresse TEXT DEFAULT '',
+    geo TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`).run();
+
 // ── AI USAGE LOG ──────────────────────────────────────────────────────────────
 db.prepare(`
   CREATE TABLE IF NOT EXISTS ai_usage_log (
