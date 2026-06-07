@@ -4862,8 +4862,30 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
             </div>
           )}
           {!leafletReady && <Spinner label="Chargement de la carte…" />}
-          <div ref={mapRef} style={{ height: "500px", borderRadius: "10px", border: `1px solid ${t.border}`,
-            display: leafletReady ? "block" : "none" }} />
+          <div style={{ position: "relative" }}>
+            <div ref={mapRef} style={{ height: "500px", borderRadius: "10px", border: `1px solid ${t.border}`,
+              display: leafletReady ? "block" : "none" }} />
+            {activeLayers.plu && (
+              <div style={{ position: "absolute", bottom: "24px", left: "10px", zIndex: 1000,
+                background: "rgba(255,255,255,0.92)", border: `1px solid ${t.border}`,
+                borderRadius: "8px", padding: "8px 12px", fontSize: "11px", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }}>
+                <p style={{ color: t.textMuted, fontWeight: 700, margin: "0 0 6px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Zones PLU</p>
+                {[
+                  { color: "#FBBF24", label: "U — Zone urbaine" },
+                  { color: "#F97316", label: "AUc — À urbaniser (court terme)" },
+                  { color: "#FDE68A", label: "AUs — À urbaniser (long terme)" },
+                  { color: "#86EFAC", label: "A — Agricole" },
+                  { color: "#4ADE80", label: "N — Naturelle protégée" },
+                ].map(({ color, label }) => (
+                  <div key={label} style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "3px" }}>
+                    <div style={{ width: "14px", height: "14px", borderRadius: "3px", flexShrink: 0,
+                      background: color, border: "1px solid #475569" }} />
+                    <span style={{ color: t.text }}>{label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <p style={{ color: t.textMuted, fontSize: "11px", marginTop: "6px" }}>
             Fond de carte : OpenStreetMap · Cadastre & PLU : IGN Géoportail · Géocodage : data.gouv.fr
           </p>
