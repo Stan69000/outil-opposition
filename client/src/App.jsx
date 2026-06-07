@@ -4672,7 +4672,7 @@ const IGN_LAYERS = {
   },
 };
 
-function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
+function CarteUrbanisme({ pvs, focusDelib, onFocused, onGoToPv }) {
   const t = useT();
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
@@ -4839,15 +4839,37 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
                 </span>
               )}
             </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "5px", maxHeight: "300px", overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px",
+              height: "calc(500px - 80px)", overflowY: "auto" }}>
               {deliberations.map(d => (
-                <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "6px 8px", background: t.surfaceAlt, borderRadius: "6px" }}>
-                  <span style={{ color: t.textSec, fontSize: "11px", flex: 1, paddingRight: "8px" }}>
-                    {d.objet.slice(0, 35)}
+                <div key={d.id} title={d.objet}
+                  style={{ display: "flex", alignItems: "center", gap: "6px",
+                    padding: "6px 8px", background: t.surfaceAlt, borderRadius: "6px",
+                    cursor: "pointer" }}
+                  onClick={() => {
+                    const marker = delibMarkersRef.current.find(m => m._deliberationId === d.id);
+                    if (marker && mapInstance.current) {
+                      try {
+                        const geo = JSON.parse(d.geo);
+                        mapInstance.current.setView([geo.lat, geo.lng], 17);
+                        marker.openPopup();
+                      } catch {}
+                    }
+                  }}>
+                  <div style={{ width: "7px", height: "7px", borderRadius: "50%", flexShrink: 0,
+                    background: d.statut === "Alerte" ? t.danger : "#8B5CF6" }} />
+                  <span style={{ color: t.textSec, fontSize: "11px", flex: 1,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {d.objet}
                   </span>
-                  <div style={{ width: "8px", height: "8px", borderRadius: "50%",
-                    background: d.statut === "Alerte" ? t.danger : "#8B5CF6", flexShrink: 0 }} />
+                  {onGoToPv && (
+                    <span title="Voir dans les PVs"
+                      onClick={e => { e.stopPropagation(); onGoToPv(d.seance_id); }}
+                      style={{ color: t.primary, fontSize: "11px", flexShrink: 0, cursor: "pointer",
+                        padding: "1px 4px", borderRadius: "3px", border: `1px solid ${t.primary}44` }}>
+                      PV ↗
+                    </span>
+                  )}
                 </div>
               ))}
               {deliberations.length === 0 && (
@@ -5152,7 +5174,7 @@ export default function App() {
       case "journal":       return <JournalTerrain pvs={pvs} failles={failles} />;
       case "veille":        return <VeilleReglementaire />;
       case "stats-elus":    return <StatsElus />;
-      case "carte":         return <CarteUrbanisme pvs={pvs} focusDelib={focusDelib} onFocused={() => setFocusDelib(null)} />;
+      case "carte":         return <CarteUrbanisme pvs={pvs} focusDelib={focusDelib} onFocused={() => setFocusDelib(null)} onGoToPv={(pvId) => { setFocusDelib(null); setTab("pv"); }} />;
       default: return null;
     }
   };
