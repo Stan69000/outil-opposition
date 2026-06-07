@@ -1,23 +1,30 @@
 const express = require("express");
 const axios = require("axios");
+const { getConfig } = require("../db");
 
 const router = express.Router();
 
-const OAUTH_URL = "https://sandbox-oauth.piste.gouv.fr/api/oauth/token";
-const API_BASE = "https://sandbox-api.piste.gouv.fr/dila/legifrance/lf-engine-app";
+const OAUTH_URL = "https://oauth.piste.gouv.fr/api/oauth/token";
+const API_BASE  = "https://api.piste.gouv.fr/dila/legifrance/lf-engine-app";
 
 // Cache token en mémoire (évite un appel OAuth à chaque requête)
-let tokenCache = { token: null, expiresAt: 0 };
+// Invalidé dès que les credentials changent
+let tokenCache = { token: null, expiresAt: 0, clientId: null };
 
 async function getToken() {
-  if (tokenCache.token && Date.now() < tokenCache.expiresAt - 30_000) {
+  const clientId     = getConfig("piste_client_id")     || process.env.PISTE_OAUTH_CLIENT_ID     || "";
+  const clientSecret = getConfig("piste_client_secret") || process.env.PISTE_OAUTH_CLIENT_SECRET || "";
+
+  if (!clientId || !clientSecret) throw new Error("Credentials PISTE non configurés");
+
+  if (tokenCache.token && tokenCache.clientId === clientId && Date.now() < tokenCache.expiresAt - 30_000) {
     return tokenCache.token;
   }
 
   const params = new URLSearchParams({
     grant_type: "client_credentials",
-    client_id: process.env.PISTE_OAUTH_CLIENT_ID,
-    client_secret: process.env.PISTE_OAUTH_CLIENT_SECRET,
+    client_id: clientId,
+    client_secret: clientSecret,
     scope: "openid",
   });
 
@@ -28,6 +35,7 @@ async function getToken() {
   tokenCache = {
     token: res.data.access_token,
     expiresAt: Date.now() + res.data.expires_in * 1000,
+    clientId,
   };
   return tokenCache.token;
 }
@@ -37,7 +45,7 @@ async function pisteGet(path, params = {}) {
   const res = await axios.get(`${API_BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${token}`,
-      "X-Api-Key": process.env.PISTE_API_KEY,
+      
     },
     params,
   });
@@ -49,7 +57,7 @@ async function pistePost(path, body) {
   const res = await axios.post(`${API_BASE}${path}`, body, {
     headers: {
       Authorization: `Bearer ${token}`,
-      "X-Api-Key": process.env.PISTE_API_KEY,
+      
       "Content-Type": "application/json",
     },
   });
@@ -103,6 +111,13 @@ router.get("/search", async (req, res) => {
         subscriptionRequired: true,
       });
     }
+    if (status === 500 || status === 403) {
+      return res.status(403).json({
+        error: "Produit Légifrance non souscrit sur PISTE",
+        detail: "Allez sur beta.piste.gouv.fr → votre application → souscrire au produit 'DILA — Légifrance'.",
+        subscriptionRequired: true,
+      });
+    }
     console.error("PISTE search error:", err.response?.data || err.message);
     res.status(502).json({ error: "Erreur API PISTE", detail: err.response?.data || err.message });
   }
@@ -135,7 +150,7 @@ router.get("/code", async (req, res) => {
         pageSize: 5,
         operateur: "ET",
         sort: "PERTINENCE",
-        typePagination: "DEFAUT",
+        typePagination: "DEFAULT",
       },
       fond: "CODE_ETAT",
     });
@@ -154,8 +169,7 @@ router.get("/ping", async (req, res) => {
     res.json({
       ok: true,
       subscribed: true,
-      searchBroken: true,
-      message: "OAuth PISTE OK — /search sandbox instable (bug DILA), fallback IA actif",
+      message: "OAuth PISTE OK — API production active",
     });
   } catch (err) {
     res.status(502).json({ ok: false, subscribed: false, error: "OAuth échoué : " + err.message });

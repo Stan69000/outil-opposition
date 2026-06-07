@@ -41,7 +41,7 @@ const CGCT_WATCH = [
 ];
 const FONDS_LF = [
   { id:"CODE_ETAT", label:"Codes en vigueur" },
-  { id:"LEGI",      label:"Légifrance général" },
+  { id:"LODA_ETAT", label:"Légifrance général" },
   { id:"JORF",      label:"Journal officiel" },
   { id:"CNIL",      label:"CNIL" },
 ];
@@ -224,6 +224,24 @@ function SectionTitle({ children, sub }) {
     <div style={{ marginBottom:"20px" }}>
       <h2 style={{ color:t.text, fontSize:"20px", fontWeight:700, margin:"0 0 4px 0" }}>{children}</h2>
       {sub && <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>{sub}</p>}
+    </div>
+  );
+}
+
+function ConfirmModal({ title, message, onConfirm, onCancel, confirmLabel="Oui", cancelLabel="Non" }) {
+  const t = useT();
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:1000,
+      display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ background:t.surface, border:`1px solid ${t.border}`, borderRadius:"12px",
+        padding:"24px", maxWidth:"420px", width:"90%", boxShadow:"0 8px 32px rgba(0,0,0,0.3)" }}>
+        <h3 style={{ color:t.text, fontSize:"16px", fontWeight:700, margin:"0 0 12px 0" }}>{title}</h3>
+        <p style={{ color:t.textMuted, fontSize:"13px", margin:"0 0 20px 0", lineHeight:1.5 }}>{message}</p>
+        <div style={{ display:"flex", gap:"10px", justifyContent:"flex-end" }}>
+          <Btn variant="ghost" onClick={onCancel}>{cancelLabel}</Btn>
+          <Btn onClick={onConfirm}>{confirmLabel}</Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -569,12 +587,13 @@ function VeilleLegifrance({ lois, setLois }) {
   const [error, setError] = useState(null);
   const [apiStatus, setApiStatus] = useState(null);
   const [useAiFallback, setUseAiFallback] = useState(false);
+  const [fallbackNotice, setFallbackNotice] = useState(null);
+  const [pendingAiQuery, setPendingAiQuery] = useState(null);
 
   useEffect(() => {
     api.legifrance.ping()
       .then(d => {
-        if (d.subscribed && !d.searchBroken) { setApiStatus("ok"); }
-        else if (d.subscribed) { setApiStatus("pending"); setUseAiFallback(true); }
+        if (d.ok && d.subscribed) { setApiStatus("ok"); }
         else { setApiStatus("pending"); setUseAiFallback(true); }
       })
       .catch(() => { setApiStatus("error"); setUseAiFallback(true); });
@@ -591,10 +610,25 @@ function VeilleLegifrance({ lois, setLois }) {
 
   const doSearch = async (q, f=fond) => {
     if (!q.trim()) return;
-    setSearching(true); setResults([]); setError(null);
+    setSearching(true); setResults([]); setError(null); setFallbackNotice(null);
     try {
-      const d = useAiFallback ? await searchViaAI(q) : await api.legifrance.search(q, f);
-      setResults(d.results||[]); setTotal(d.total||0);
+      if (useAiFallback) {
+        const d = await searchViaAI(q);
+        setResults(d.results||[]); setTotal(d.total||0);
+      } else {
+        const resp = await fetch(`/api/legifrance/search?q=${encodeURIComponent(q)}&fond=${f}`);
+        const d = await resp.json();
+        if (!resp.ok) {
+          if (d.subscriptionRequired) {
+            setSearching(false);
+            setPendingAiQuery(q);
+            return;
+          }
+          throw new Error(d.error || `Erreur ${resp.status}`);
+        } else {
+          setResults(d.results||[]); setTotal(d.total||0);
+        }
+      }
     } catch (err) { setError(err.message); }
     setSearching(false);
   };
@@ -612,21 +646,52 @@ function VeilleLegifrance({ lois, setLois }) {
     } catch(err) { if (!err.message.includes("déjà")) alert(err.message); }
   };
 
-  const statusDot = { ok:t.success, pending:t.warning, error:t.danger }[apiStatus] || t.textMuted;
-  const statusLabel = { ok:"PISTE actif", pending:"Fallback IA actif", error:"PISTE hors ligne" }[apiStatus] || "Vérification…";
+  const statusDot = apiStatus === "ok" ? t.success : useAiFallback ? t.warning : apiStatus === "error" ? t.danger : t.textMuted;
+  const statusLabel = apiStatus === "ok" ? "PISTE actif" : useAiFallback ? "IA Claude (PISTE non souscrit)" : apiStatus === "error" ? "PISTE hors ligne" : "Vérification…";
   const PC = { Haute:t.danger, Moyenne:t.warning, Basse:t.success };
+
+  const confirmAiFallback = async () => {
+    const q = pendingAiQuery;
+    setPendingAiQuery(null);
+    setUseAiFallback(true);
+    setSearching(true); setResults([]); setError(null); setFallbackNotice(null);
+    try {
+      const d = await searchViaAI(q);
+      setResults(d.results||[]); setTotal(d.total||0);
+      setFallbackNotice("Résultats via IA Claude (PISTE non souscrit)");
+    } catch(err) { setError(err.message); }
+    setSearching(false);
+  };
 
   return (
     <div>
       {aiPanel && <AIPanel {...aiPanel} onClose={()=>setAiPanel(null)} />}
+      {pendingAiQuery && (
+        <ConfirmModal
+          title="API Légifrance indisponible"
+          message="Le produit Légifrance n'est pas encore souscrit sur PISTE (beta.piste.gouv.fr). Voulez-vous utiliser Claude IA comme source de résultats à la place ?"
+          confirmLabel="Utiliser l'IA"
+          cancelLabel="Annuler"
+          onConfirm={confirmAiFallback}
+          onCancel={() => setPendingAiQuery(null)}
+        />
+      )}
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"20px" }}>
         <SectionTitle sub="Codes consolidés · Textes applicables aux communes">
           Veille Légifrance
         </SectionTitle>
-        <div style={{ display:"flex", alignItems:"center", gap:"6px", marginTop:"4px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:"8px", marginTop:"4px" }}>
           <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:statusDot, flexShrink:0 }} />
           <span style={{ color:t.textMuted, fontSize:"11px" }}>{statusLabel}</span>
+          {useAiFallback && (
+            <button onClick={() => { setUseAiFallback(false); setFallbackNotice(null); setApiStatus(null);
+              api.legifrance.ping().then(d => { if (d.ok && d.subscribed) setApiStatus("ok"); else { setApiStatus("pending"); setUseAiFallback(true); } }).catch(() => { setApiStatus("error"); setUseAiFallback(true); }); }}
+              style={{ fontSize:"10px", padding:"2px 8px", background:"none", border:`1px solid ${t.border}`,
+                borderRadius:"4px", color:t.textMuted, cursor:"pointer", fontFamily:"inherit" }}>
+              Réessayer PISTE
+            </button>
+          )}
         </div>
       </div>
 
@@ -660,6 +725,12 @@ function VeilleLegifrance({ lois, setLois }) {
           </Card>
 
           {searching && <Spinner label={useAiFallback?"Recherche via IA…":"Interrogation PISTE…"} />}
+          {fallbackNotice && !error && (
+            <div style={{ background:t.primaryBg||"#e8f0fe", border:`1px solid ${t.primary}44`, borderRadius:"8px",
+              padding:"8px 14px", marginBottom:"10px", color:t.primary, fontSize:"11px" }}>
+              {fallbackNotice}
+            </div>
+          )}
           {error && (
             <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}55`, borderRadius:"8px",
               padding:"12px 16px", marginBottom:"14px", color:t.danger, fontSize:"12px" }}>
