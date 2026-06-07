@@ -410,12 +410,18 @@ function DelibExtractor({ pv, onDone }) {
   const t = useT();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState([]);
-  const [done, setDone] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState(null);
+  const [delibs, setDelibs] = useState([]);
+  const [expanded, setExpanded] = useState(null);
   const abortRef = useRef(null);
 
+  useEffect(() => {
+    api.deliberations.bySeance(pv.id).then(setDelibs).catch(() => {});
+  }, [pv.id]);
+
   const start = async () => {
-    setRunning(true); setProgress([]); setDone(false); setError(null);
+    setRunning(true); setProgress([]); setExtracting(true); setError(null);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
@@ -441,7 +447,11 @@ function DelibExtractor({ pv, onDone }) {
               ...p.slice(0, -1),
               { ...p[p.length - 1], objet: evt.delib.objet, is_urba: evt.delib.is_urba, geo: evt.delib.geo },
             ]);
-            if (evt.type === "done") { setDone(true); onDone && onDone(evt.created); }
+            if (evt.type === "done") {
+              setExtracting(false);
+              api.deliberations.bySeance(pv.id).then(setDelibs).catch(() => {});
+              onDone && onDone();
+            }
             if (evt.type === "error") setError(evt.message);
           } catch {}
         }
@@ -452,32 +462,148 @@ function DelibExtractor({ pv, onDone }) {
     setRunning(false);
   };
 
-  const stop = () => { abortRef.current?.abort(); setRunning(false); };
+  const stop = () => { abortRef.current?.abort(); setRunning(false); setExtracting(false); };
+
+  const RISQUE_COLOR = { Aucun: t.textMuted, Faible: t.success, Moyen: t.warning, Élevé: t.danger };
 
   if (!pv.pdfs?.length) return null;
 
   return (
     <div style={{ marginBottom: "12px" }}>
-      <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: progress.length ? "8px" : 0 }}>
-        <Btn onClick={running ? stop : start} variant={running ? "warning" : "outline"} size="sm" disabled={done}>
-          {running ? "Arrêter" : done ? "Délibérations extraites" : `Extraire ${pv.pdfs.length} délibération(s)`}
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: (progress.length || delibs.length) ? "8px" : 0 }}>
+        <Btn onClick={running ? stop : start} variant={running ? "warning" : "outline"} size="sm" disabled={extracting && !running}>
+          {running ? "Arrêter" : delibs.length > 0 ? `Ré-extraire (${pv.pdfs.length})` : `Extraire ${pv.pdfs.length} délibération(s)`}
         </Btn>
         {running && <span style={{ color: t.textMuted, fontSize: "11px" }}>Extraction en cours…</span>}
-        {done && <span style={{ color: t.success, fontSize: "11px" }}>Terminé</span>}
         {error && <span style={{ color: t.danger, fontSize: "11px" }}>Erreur : {error}</span>}
       </div>
-      {progress.length > 0 && (
+
+      {running && progress.length > 0 && (
         <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "6px",
-          padding: "8px 12px", maxHeight: "120px", overflowY: "auto" }}>
+          padding: "8px 12px", maxHeight: "100px", overflowY: "auto", marginBottom: "8px" }}>
           {progress.map((e, i) => (
             <div key={i} style={{ fontSize: "11px", color: t.textSec, marginBottom: "2px",
               display: "flex", gap: "8px", alignItems: "center" }}>
               <span style={{ color: t.textMuted, flexShrink: 0 }}>[{e.current}/{e.total}]</span>
               <span style={{ fontWeight: 600, flex: 1 }}>{e.objet || e.nom}</span>
-              {e.is_urba && <span style={{ color: t.primary, fontSize: "10px", flexShrink: 0 }}>Urba</span>}
-              {e.geo && <span style={{ color: t.success, fontSize: "10px", flexShrink: 0 }}>Géo</span>}
+              {e.is_urba && <span style={{ color: t.primary, fontSize: "10px" }}>Urba</span>}
+              {e.geo && <span style={{ color: t.success, fontSize: "10px" }}>Géo</span>}
             </div>
           ))}
+        </div>
+      )}
+
+      {delibs.length > 0 && (
+        <div style={{ border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
+          {delibs.map((d, i) => {
+            const isExp = expanded === d.id;
+            const alertCount = d.anomalies?.length || 0;
+            const hasGeo = !!d.geo;
+            return (
+              <div key={d.id || i}>
+                <div
+                  onClick={() => setExpanded(isExp ? null : d.id)}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px",
+                    borderBottom: `1px solid ${t.border}`, cursor: "pointer",
+                    background: isExp ? t.surfaceAlt : "transparent",
+                    transition: "background 0.15s" }}>
+                  <span style={{ color: t.textMuted, fontSize: "10px", width: "20px", flexShrink: 0, fontWeight: 600 }}>
+                    {d.numero || i + 1}
+                  </span>
+                  <span style={{ fontSize: "12px", color: t.text, flex: 1, lineHeight: 1.3 }}>{d.objet}</span>
+                  <div style={{ display: "flex", gap: "5px", flexShrink: 0, alignItems: "center" }}>
+                    {d.is_urba && (
+                      <span style={{ fontSize: "10px", color: "#fff", background: t.primary,
+                        padding: "1px 6px", borderRadius: "10px", fontWeight: 600,
+                        cursor: hasGeo ? "pointer" : "default",
+                        title: hasGeo ? d.geo && JSON.parse(d.geo)?.adresse : d.adresse }}
+                        onClick={e => { e.stopPropagation(); setExpanded(isExp ? null : d.id); }}>
+                        Urba{hasGeo ? " ·" : ""}
+                      </span>
+                    )}
+                    {alertCount > 0 && (
+                      <span style={{ fontSize: "10px", color: "#fff", background: t.danger,
+                        padding: "1px 6px", borderRadius: "10px", fontWeight: 600, cursor: "pointer" }}
+                        onClick={e => { e.stopPropagation(); setExpanded(isExp ? null : d.id); }}>
+                        ⚠ {alertCount}
+                      </span>
+                    )}
+                    {d.pdf_url && (
+                      <a href={d.pdf_url} target="_blank" rel="noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        style={{ fontSize: "10px", color: t.primary, textDecoration: "none",
+                          padding: "1px 5px", border: `1px solid ${t.primary}44`, borderRadius: "4px" }}>
+                        PDF
+                      </a>
+                    )}
+                    <span style={{ color: t.textMuted, fontSize: "10px" }}>{isExp ? "▲" : "▼"}</span>
+                  </div>
+                </div>
+
+                {isExp && (
+                  <div style={{ padding: "12px 16px", background: t.surfaceAlt, borderBottom: `1px solid ${t.border}` }}
+                    onClick={e => e.stopPropagation()}>
+
+                    {(d.votes_pour > 0 || d.votes_contre > 0 || d.votes_abstention > 0) && (
+                      <div style={{ display: "flex", gap: "14px", marginBottom: "10px" }}>
+                        <span style={{ color: t.success, fontSize: "12px", fontWeight: 600 }}>✓ {d.votes_pour} pour</span>
+                        <span style={{ color: t.danger, fontSize: "12px", fontWeight: 600 }}>✗ {d.votes_contre} contre</span>
+                        <span style={{ color: t.warning, fontSize: "12px", fontWeight: 600 }}>○ {d.votes_abstention} abst.</span>
+                      </div>
+                    )}
+
+                    {d.is_urba && d.adresse && (
+                      <div style={{ marginBottom: "10px", padding: "6px 10px",
+                        background: t.primary + "18", borderRadius: "6px", borderLeft: `3px solid ${t.primary}` }}>
+                        <span style={{ color: t.textMuted, fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Adresse concernée</span>
+                        <p style={{ color: t.text, fontSize: "12px", margin: "2px 0 0 0" }}>{d.adresse}</p>
+                        {hasGeo && (
+                          <p style={{ color: t.primary, fontSize: "11px", margin: "2px 0 0 0" }}>
+                            Géolocalisé — visible sur la carte urbanisme
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {d.anomalies?.length > 0 && (
+                      <div style={{ marginBottom: "10px", padding: "8px 12px",
+                        background: t.dangerBg || t.danger + "18", borderRadius: "6px", borderLeft: `3px solid ${t.danger}` }}>
+                        <p style={{ color: t.danger, fontSize: "10px", fontWeight: 700, margin: "0 0 5px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          Anomalies détectées
+                        </p>
+                        {d.anomalies.map((a, ai) => (
+                          <p key={ai} style={{ color: t.danger, fontSize: "12px", margin: "2px 0" }}>• {a}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {d.points?.length > 0 && (
+                      <div style={{ marginBottom: "10px" }}>
+                        <p style={{ color: t.textMuted, fontSize: "10px", fontWeight: 600, margin: "0 0 4px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Points clés</p>
+                        {d.points.map((p, pi) => (
+                          <p key={pi} style={{ color: t.textSec, fontSize: "12px", margin: "2px 0" }}>· {p}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {d.action_opposition && (
+                      <div style={{ padding: "6px 10px", background: t.primary + "12",
+                        borderRadius: "6px", borderLeft: `3px solid ${t.primary}` }}>
+                        <p style={{ color: t.textMuted, fontSize: "10px", fontWeight: 600, margin: "0 0 3px 0", textTransform: "uppercase", letterSpacing: "0.05em" }}>Action recommandée</p>
+                        <p style={{ color: t.text, fontSize: "12px", margin: 0, fontStyle: "italic" }}>{d.action_opposition}</p>
+                      </div>
+                    )}
+
+                    {d.risque_juridique && d.risque_juridique !== "Aucun" && (
+                      <p style={{ color: RISQUE_COLOR[d.risque_juridique] || t.textMuted, fontSize: "11px", margin: "8px 0 0 0", fontWeight: 600 }}>
+                        Risque juridique : {d.risque_juridique}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1071,12 +1197,9 @@ function ProcessVerbaux({ pvs, setPvs }) {
                   )}
 
                   {pv.pdfs?.length > 0 && (
-                    <PdfSeanceAnalyzer pv={pv} onDone={() => {
-                      api.pvs.list().then(all => setPvs(all)).catch(()=>{});
+                    <DelibExtractor pv={pv} onDone={() => {
+                      api.pvs.list().then(all => setPvs(all)).catch(() => {});
                     }} />
-                  )}
-                  {pv.pdfs?.length > 0 && (
-                    <DelibExtractor pv={pv} onDone={() => {}} />
                   )}
 
                   {pv.notes && (
