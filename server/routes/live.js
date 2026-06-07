@@ -63,7 +63,8 @@ router.post("/:id/points", (req, res) => {
     VALUES (?, ?, ?)
   `).run(id, ordre ?? maxOrdre + 1, titre);
 
-  res.json(db.prepare("SELECT * FROM live_points WHERE id = ?").get(result.lastInsertRowid));
+  const row = db.prepare("SELECT * FROM live_points WHERE id = ?").get(result.lastInsertRowid);
+  res.json({ ...row, interventions: JSON.parse(row.interventions || "[]") });
 });
 
 // Mettre à jour un point (vote, résultat, anomalie, notes, interventions)
