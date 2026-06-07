@@ -43,6 +43,13 @@ app.use("/api/benchmark",    require("./routes/benchmark"));
 app.use("/api/push",         require("./routes/push"));
 app.use("/api/admin",        require("./routes/admin"));
 
+// Fonctionnalités v3
+app.use("/api/modeles",      aiLimiter, require("./routes/modeles"));
+app.use("/api/courriers",    aiLimiter, require("./routes/courriers"));
+app.use("/api/engagements",  require("./routes/engagements"));
+app.use("/api/journal",      require("./routes/journal"));
+app.use("/api/veille",       aiLimiter, require("./routes/veille").router);
+
 // Root info en dev
 if (process.env.NODE_ENV !== "production") {
   app.get("/", (_, res) => res.json({ api: "Opposition Fleurieux", dev: "http://localhost:5173" }));

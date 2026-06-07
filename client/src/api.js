@@ -41,8 +41,12 @@ export const api = {
     ping:    ()     => req("GET", "/legifrance/ping"),
   },
   pdf: {
-    analyze: (pvId, pdfUrl, pdfNom) => req("POST", "/pdf/analyze", { pvId, pdfUrl, pdfNom }),
-    // analyzeSeance utilise SSE — géré directement avec fetch dans le composant
+    analyze:     (pvId, pdfUrl, pdfNom) => req("POST", "/pdf/analyze", { pvId, pdfUrl, pdfNom }),
+    exportWord:  (titre, contenu, sous_titre) => fetch("/api/pdf/export-word", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ titre, contenu, sous_titre }),
+    }).then(r => r.blob()),
   },
   analyses: {
     patterns:   ()      => req("GET", "/analyses/patterns"),
@@ -50,6 +54,7 @@ export const api = {
     seancePrep: (date)  => req("GET", `/analyses/seance-prep${date ? `?date=${date}` : ""}`),
     rapport:    ()      => req("GET", "/analyses/rapport"),
     syncLog:    ()      => req("GET", "/analyses/sync-log"),
+    elus:       ()      => req("GET", "/analyses/elus"),
   },
   jurisprudence: {
     search: (q, juridiction) =>
@@ -101,5 +106,41 @@ export const api = {
     testAI:      ()     => req("POST", "/config/test/ai"),
     testLF:      ()     => req("POST", "/config/test/legifrance"),
     testSMTP:    ()     => req("POST", "/config/test/smtp"),
+  },
+  // ── ROUTES v3 ────────────────────────────────────────────────────────────────
+  modeles: {
+    list:     ()         => req("GET",    "/modeles"),
+    create:   (data)     => req("POST",   "/modeles", data),
+    update:   (id, data) => req("PUT",    `/modeles/${id}`, data),
+    remove:   (id)       => req("DELETE", `/modeles/${id}`),
+    generate: (data)     => req("POST",   "/modeles/generate", data),
+  },
+  courriers: {
+    list:     ()         => req("GET",    "/courriers"),
+    create:   (data)     => req("POST",   "/courriers", data),
+    update:   (id, data) => req("PUT",    `/courriers/${id}`, data),
+    remove:   (id)       => req("DELETE", `/courriers/${id}`),
+    generate: (data)     => req("POST",   "/courriers/generate", data),
+    envoyer:  (id)       => req("POST",   `/courriers/${id}/envoyer`),
+  },
+  engagements: {
+    list:     ()         => req("GET",    "/engagements"),
+    create:   (data)     => req("POST",   "/engagements", data),
+    update:   (id, data) => req("PUT",    `/engagements/${id}`, data),
+    remove:   (id)       => req("DELETE", `/engagements/${id}`),
+  },
+  journal: {
+    list:     ()         => req("GET",    "/journal"),
+    create:   (data)     => req("POST",   "/journal", data),
+    update:   (id, data) => req("PUT",    `/journal/${id}`, data),
+    remove:   (id)       => req("DELETE", `/journal/${id}`),
+  },
+  veille: {
+    list:        ()    => req("GET",  "/veille"),
+    unreadCount: ()    => req("GET",  "/veille/unread-count"),
+    scan:        ()    => req("POST", "/veille/scan"),
+    markRead:    (id)  => req("PUT",  `/veille/${id}/lu`),
+    markAllRead: ()    => req("POST", "/veille/mark-all-read"),
+    remove:      (id)  => req("DELETE", `/veille/${id}`),
   },
 };

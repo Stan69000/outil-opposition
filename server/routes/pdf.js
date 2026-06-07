@@ -1,7 +1,8 @@
 const express = require("express");
-const { db, parsePv } = require("../db");
+const { db, parsePv, getConfig } = require("../db");
 const { analyzePdf } = require("../services/pdf-analyzer");
 const rateLimit = require("express-rate-limit");
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = require("docx");
 
 const router = express.Router();
 
@@ -135,6 +136,60 @@ router.post("/analyze-seance", pdfLimiter, async (req, res) => {
   const updated = parsePv(db.prepare("SELECT * FROM pvs WHERE id = ?").get(pvId));
   send({ type: "done", pv: updated, analysed, errors });
   res.end();
+});
+
+// POST /api/pdf/export-word — exporte un texte en .docx
+router.post("/export-word", async (req, res) => {
+  const { titre, contenu, sous_titre = "" } = req.body;
+  if (!titre || !contenu) return res.status(400).json({ error: "titre et contenu requis" });
+
+  const commune = getConfig("commune_nom") || "Fleurieux-sur-l'Arbresle";
+
+  const paragraphes = contenu.split("\n").filter(l => l.trim() !== "").map(ligne => {
+    const isSection = ligne.startsWith("##") || ligne.match(/^[A-Z][A-Z\s]{4,}:?$/);
+    return new Paragraph({
+      children: [new TextRun({
+        text: ligne.replace(/^#+\s*/, ""),
+        bold: isSection,
+        size: isSection ? 24 : 22,
+      })],
+      heading: isSection ? HeadingLevel.HEADING_2 : undefined,
+      spacing: { before: isSection ? 240 : 120, after: 120 },
+    });
+  });
+
+  const doc = new Document({
+    sections: [{
+      properties: {},
+      children: [
+        new Paragraph({
+          children: [new TextRun({ text: commune, bold: true, size: 20, color: "666666" })],
+          alignment: AlignmentType.RIGHT,
+          spacing: { after: 400 },
+        }),
+        new Paragraph({
+          children: [new TextRun({ text: titre, bold: true, size: 32 })],
+          heading: HeadingLevel.HEADING_1,
+          spacing: { after: 200 },
+        }),
+        ...(sous_titre ? [new Paragraph({
+          children: [new TextRun({ text: sous_titre, size: 22, color: "666666", italics: true })],
+          spacing: { after: 400 },
+        })] : []),
+        new Paragraph({
+          children: [new TextRun({ text: `Opposition municipale — ${new Date().toLocaleDateString("fr-FR")}`, size: 20, color: "999999" })],
+          spacing: { after: 600 },
+        }),
+        ...paragraphes,
+      ],
+    }],
+  });
+
+  const buffer = await Packer.toBuffer(doc);
+  const filename = `${titre.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 50)}.docx`;
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(buffer);
 });
 
 module.exports = router;
