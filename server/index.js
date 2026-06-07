@@ -44,6 +44,7 @@ app.use("/api/push",         require("./routes/push"));
 app.use("/api/admin",        require("./routes/admin"));
 
 // Fonctionnalités v3
+app.use("/api/deliberations", aiLimiter, require("./routes/deliberations"));
 app.use("/api/modeles",      aiLimiter, require("./routes/modeles"));
 app.use("/api/courriers",    aiLimiter, require("./routes/courriers"));
 app.use("/api/engagements",  require("./routes/engagements"));

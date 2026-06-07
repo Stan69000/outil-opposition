@@ -30,7 +30,7 @@ router.post("/", (req, res) => {
 
 router.put("/:id", (req, res) => {
   const { id } = req.params;
-  const { statut, notes, votes, points, anomalies } = req.body;
+  const { statut, notes, votes, points, anomalies, geo } = req.body;
   const existing = db.prepare("SELECT * FROM pvs WHERE id = ?").get(id);
   if (!existing) return res.status(404).json({ error: "PV introuvable" });
 
@@ -42,7 +42,8 @@ router.put("/:id", (req, res) => {
       votes_contre = @contre,
       votes_abstention = @abstention,
       points = @points,
-      anomalies = @anomalies
+      anomalies = @anomalies,
+      geo = @geo
     WHERE id = @id
   `).run({
     id,
@@ -53,6 +54,7 @@ router.put("/:id", (req, res) => {
     abstention: votes?.abstention ?? existing.votes_abstention,
     points: points ? JSON.stringify(points) : existing.points,
     anomalies: anomalies ? JSON.stringify(anomalies) : existing.anomalies,
+    geo: geo ?? existing.geo,
   });
   const updated = db.prepare("SELECT * FROM pvs WHERE id = ?").get(id);
   res.json(parsePv(updated));

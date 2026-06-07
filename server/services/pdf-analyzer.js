@@ -46,11 +46,15 @@ Retourne ce JSON (sans markdown, sans commentaire) :
   "cgct_refs": ["références CGCT ou Code de l'urbanisme citées ou applicables"],
   "points_cles": ["2-4 points essentiels de la délibération"],
   "risque_juridique": "Aucun|Faible|Moyen|Élevé",
-  "action_opposition": "action concrète recommandée pour l'opposition ou null"
+  "action_opposition": "action concrète recommandée pour l'opposition ou null",
+  "is_urbanisme": false,
+  "adresse_concernee": null
 }
 
 Pour les votes : cherche des mentions comme "adopté à X voix pour, Y contre, Z abstention".
-Pour les anomalies : vérifie délais légaux, procédure, compétence, publication.`;
+Pour les anomalies : vérifie délais légaux, procédure, compétence, publication.
+Pour is_urbanisme : true si la délibération concerne PLU, permis de construire, lotissement, zone, parcelle, voirie, foncier, ZAN, EBC, SCOT.
+Pour adresse_concernee : si is_urbanisme, extrais l'adresse, la rue, le lieu-dit ou la description géographique mentionnée (ex: "chemin des Pesses", "parcelle AB 42", "zone UA nord"). Sinon null.`;
 
   const message = await client.messages.create({
     model: "claude-opus-4-5",

@@ -405,6 +405,85 @@ function PdfSeanceAnalyzer({ pv, onDone }) {
   );
 }
 
+// ── DELIB EXTRACTOR ───────────────────────────────────────────────────────────
+function DelibExtractor({ pv, onDone }) {
+  const t = useT();
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState([]);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState(null);
+  const abortRef = useRef(null);
+
+  const start = async () => {
+    setRunning(true); setProgress([]); setDone(false); setError(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await fetch(`/api/deliberations/extract/${pv.id}`, {
+        method: "POST",
+        signal: ctrl.signal,
+      });
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done: d, value } = await reader.read();
+        if (d) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const evt = JSON.parse(line.slice(5).trim());
+            if (evt.type === "progress") setProgress(p => [...p, evt]);
+            if (evt.type === "result") setProgress(p => [
+              ...p.slice(0, -1),
+              { ...p[p.length - 1], objet: evt.delib.objet, is_urba: evt.delib.is_urba, geo: evt.delib.geo },
+            ]);
+            if (evt.type === "done") { setDone(true); onDone && onDone(evt.created); }
+            if (evt.type === "error") setError(evt.message);
+          } catch {}
+        }
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") setError(e.message);
+    }
+    setRunning(false);
+  };
+
+  const stop = () => { abortRef.current?.abort(); setRunning(false); };
+
+  if (!pv.pdfs?.length) return null;
+
+  return (
+    <div style={{ marginBottom: "12px" }}>
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: progress.length ? "8px" : 0 }}>
+        <Btn onClick={running ? stop : start} variant={running ? "warning" : "outline"} size="sm" disabled={done}>
+          {running ? "Arrêter" : done ? "Délibérations extraites" : `Extraire ${pv.pdfs.length} délibération(s)`}
+        </Btn>
+        {running && <span style={{ color: t.textMuted, fontSize: "11px" }}>Extraction en cours…</span>}
+        {done && <span style={{ color: t.success, fontSize: "11px" }}>Terminé</span>}
+        {error && <span style={{ color: t.danger, fontSize: "11px" }}>Erreur : {error}</span>}
+      </div>
+      {progress.length > 0 && (
+        <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "6px",
+          padding: "8px 12px", maxHeight: "120px", overflowY: "auto" }}>
+          {progress.map((e, i) => (
+            <div key={i} style={{ fontSize: "11px", color: t.textSec, marginBottom: "2px",
+              display: "flex", gap: "8px", alignItems: "center" }}>
+              <span style={{ color: t.textMuted, flexShrink: 0 }}>[{e.current}/{e.total}]</span>
+              <span style={{ fontWeight: 600, flex: 1 }}>{e.objet || e.nom}</span>
+              {e.is_urba && <span style={{ color: t.primary, fontSize: "10px", flexShrink: 0 }}>Urba</span>}
+              {e.geo && <span style={{ color: t.success, fontSize: "10px", flexShrink: 0 }}>Géo</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SYNC MAIRIE ────────────────────────────────────────────────────────────────
 function SyncMairie({ onImport }) {
   const t = useT();
@@ -995,6 +1074,9 @@ function ProcessVerbaux({ pvs, setPvs }) {
                     <PdfSeanceAnalyzer pv={pv} onDone={() => {
                       api.pvs.list().then(all => setPvs(all)).catch(()=>{});
                     }} />
+                  )}
+                  {pv.pdfs?.length > 0 && (
+                    <DelibExtractor pv={pv} onDone={() => {}} />
                   )}
 
                   {pv.notes && (
@@ -3943,16 +4025,53 @@ function VeilleReglementaire() {
 }
 
 // ── CARTE URBANISME ───────────────────────────────────────────────────────────
+const IGN_LAYERS = {
+  cadastre: {
+    label: "Cadastre",
+    layer: null,
+    make: (L) => L.tileLayer.wms(
+      "https://data.geopf.fr/wms-r/wms",
+      {
+        layers: "CADASTRALPARCELS.PARCELLAIRE_EXPRESS",
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        opacity: 0.7,
+        attribution: "© IGN Géoportail",
+      }
+    ),
+  },
+  plu: {
+    label: "Zones PLU",
+    layer: null,
+    make: (L) => L.tileLayer.wms(
+      "https://data.geopf.fr/wms-r/wms",
+      {
+        layers: "MS_ZONE_URBA",
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        opacity: 0.6,
+        attribution: "© Géoportail de l'Urbanisme",
+      }
+    ),
+  },
+};
+
 function CarteUrbanisme({ pvs }) {
   const t = useT();
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const markersRef = useRef([]);
+  const layerRefs = useRef({});
   const [leafletReady, setLeafletReady] = useState(false);
   const [selectedPv, setSelectedPv] = useState(null);
   const [geoForm, setGeoForm] = useState({ pvId: 0, lat: "", lng: "", adresse: "" });
   const [geocoding, setGeocoding] = useState(false);
   const [pvGeos, setPvGeos] = useState([]);
+  const [activeLayers, setActiveLayers] = useState({ cadastre: false, plu: false });
+  const [deliberations, setDeliberations] = useState([]);
+  const delibMarkersRef = useRef([]);
 
   const pvUrba = pvs.filter(p =>
     p.objet?.toLowerCase().includes("plu") ||
@@ -3962,6 +4081,12 @@ function CarteUrbanisme({ pvs }) {
     p.objet?.toLowerCase().includes("permis") ||
     p.geo
   );
+
+  useEffect(() => {
+    api.deliberations.list().then(all => {
+      setDeliberations(all.filter(d => d.is_urba && d.geo));
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     import("leaflet").then(L => {
@@ -4002,6 +4127,53 @@ function CarteUrbanisme({ pvs }) {
     setPvGeos(geoData);
   }, [leafletReady, pvs]);
 
+  // Marqueurs délibérations urbanisme extraites
+  useEffect(() => {
+    const map = mapInstance.current;
+    const L = window.L;
+    if (!map || !L || !leafletReady) return;
+
+    delibMarkersRef.current.forEach(m => map.removeLayer(m));
+    delibMarkersRef.current = [];
+
+    deliberations.forEach(d => {
+      try {
+        const geo = JSON.parse(d.geo);
+        const color = d.statut === "Alerte" ? "#EF4444" : "#8B5CF6";
+        const marker = L.circleMarker([geo.lat, geo.lng], {
+          radius: 8, color, fillColor: color, fillOpacity: 0.85,
+          dashArray: d.statut === "Alerte" ? "4" : null,
+        })
+          .addTo(map)
+          .bindPopup(`
+            <b>${d.objet}</b><br>
+            <small>${geo.adresse || d.adresse || ""}</small><br>
+            ${d.statut === "Alerte" ? `<span style="color:#EF4444">⚠ ${d.anomalies?.[0] || "Anomalie"}</span>` : ""}
+          `);
+        delibMarkersRef.current.push(marker);
+      } catch {}
+    });
+  }, [deliberations, leafletReady]);
+
+  const toggleLayer = (key) => {
+    const map = mapInstance.current;
+    const L = window.L;
+    if (!map || !L) return;
+
+    if (activeLayers[key]) {
+      if (layerRefs.current[key]) {
+        map.removeLayer(layerRefs.current[key]);
+        layerRefs.current[key] = null;
+      }
+      setActiveLayers(prev => ({ ...prev, [key]: false }));
+    } else {
+      const layer = IGN_LAYERS[key].make(L);
+      layer.addTo(map);
+      layerRefs.current[key] = layer;
+      setActiveLayers(prev => ({ ...prev, [key]: true }));
+    }
+  };
+
   const geocodeAdresse = async () => {
     if (!geoForm.adresse) return;
     setGeocoding(true);
@@ -4020,9 +4192,23 @@ function CarteUrbanisme({ pvs }) {
 
   const saveGeo = async () => {
     if (!geoForm.pvId || !geoForm.lat || !geoForm.lng) return;
-    const geo = JSON.stringify({ lat: +geoForm.lat, lng: +geoForm.lng, adresse: geoForm.adresse });
-    await api.pvs.update(geoForm.pvId, { geo });
-    alert("Position enregistrée. Rechargez la carte pour voir le marqueur.");
+    const geoJson = JSON.stringify({ lat: +geoForm.lat, lng: +geoForm.lng, adresse: geoForm.adresse });
+    const updated = await api.pvs.update(geoForm.pvId, { geo: geoJson });
+
+    // Ajouter le marqueur sans recharger
+    if (mapInstance.current && updated) {
+      const L = window.L;
+      const geo = JSON.parse(geoJson);
+      const pv = pvUrba.find(p => p.id === geoForm.pvId);
+      const color = pv?.statut === "Alerte" ? "#EF4444" : pv?.statut === "Analysé" ? "#3B82F6" : "#22C55E";
+      const marker = L.circleMarker([geo.lat, geo.lng], { radius: 10, color, fillColor: color, fillOpacity: 0.7 })
+        .addTo(mapInstance.current)
+        .bindPopup(`<b>${pv?.date}</b><br>${pv?.objet}<br><small>${geo.adresse || ""}</small>`);
+      markersRef.current.push(marker);
+      mapInstance.current.setView([geo.lat, geo.lng], 16);
+      setPvGeos(prev => [...prev, { pv: { ...pv, geo: geoJson }, geo }]);
+    }
+
     setGeoForm({ pvId: 0, lat: "", lng: "", adresse: "" });
   };
 
@@ -4034,11 +4220,22 @@ function CarteUrbanisme({ pvs }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: "16px", alignItems: "start" }}>
         <div>
+          {leafletReady && (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              {Object.entries(IGN_LAYERS).map(([key, cfg]) => (
+                <Btn key={key} size="sm"
+                  variant={activeLayers[key] ? "primary" : "ghost"}
+                  onClick={() => toggleLayer(key)}>
+                  {cfg.label}
+                </Btn>
+              ))}
+            </div>
+          )}
           {!leafletReady && <Spinner label="Chargement de la carte…" />}
           <div ref={mapRef} style={{ height: "500px", borderRadius: "10px", border: `1px solid ${t.border}`,
             display: leafletReady ? "block" : "none" }} />
           <p style={{ color: t.textMuted, fontSize: "11px", marginTop: "6px" }}>
-            Fond de carte : OpenStreetMap · Géocodage : data.gouv.fr (API Adresse)
+            Fond de carte : OpenStreetMap · Cadastre & PLU : IGN Géoportail · Géocodage : data.gouv.fr
           </p>
         </div>
 
@@ -4072,19 +4269,31 @@ function CarteUrbanisme({ pvs }) {
 
           <Card>
             <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, margin: "0 0 10px 0",
-              textTransform: "uppercase" }}>PVs urbanisme</p>
+              textTransform: "uppercase" }}>
+              Délibérations urbanisme
+              {deliberations.length > 0 && (
+                <span style={{ marginLeft: "6px", color: t.primary, fontWeight: 700 }}>
+                  {deliberations.length} géolocalisée(s)
+                </span>
+              )}
+            </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "5px", maxHeight: "300px", overflowY: "auto" }}>
-              {pvUrba.map(p => (
-                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+              {deliberations.map(d => (
+                <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
                   padding: "6px 8px", background: t.surfaceAlt, borderRadius: "6px" }}>
                   <span style={{ color: t.textSec, fontSize: "11px", flex: 1, paddingRight: "8px" }}>
-                    {p.date} — {p.objet.slice(0, 30)}
+                    {d.objet.slice(0, 35)}
                   </span>
                   <div style={{ width: "8px", height: "8px", borderRadius: "50%",
-                    background: p.geo ? t.success : t.textMuted, flexShrink: 0 }} />
+                    background: d.statut === "Alerte" ? t.danger : "#8B5CF6", flexShrink: 0 }} />
                 </div>
               ))}
-              {pvUrba.length === 0 && <p style={{ color: t.textMuted, fontSize: "12px" }}>Aucun PV d'urbanisme.</p>}
+              {deliberations.length === 0 && (
+                <p style={{ color: t.textMuted, fontSize: "12px" }}>
+                  Aucune délibération urbanisme géolocalisée.<br />
+                  Utilisez "Extraire les délibérations" dans les PVs.
+                </p>
+              )}
             </div>
           </Card>
         </div>
