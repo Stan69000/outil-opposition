@@ -3803,6 +3803,7 @@ function VeilleReglementaire() {
   const [alertes, setAlertes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  const [scanMsg, setScanMsg] = useState(null);
   const [filter, setFilter] = useState("Tous");
 
   const CATS = ["Finances", "Urbanisme", "Élus", "Marchés publics", "Environnement", "RH", "Autre"];
@@ -3813,12 +3814,18 @@ function VeilleReglementaire() {
   }, []);
 
   const scan = async () => {
-    setScanning(true);
+    setScanning(true); setScanMsg(null);
     try {
       const { alertes: nouvelles } = await api.veille.scan();
-      if (nouvelles.length > 0) setAlertes(prev => [...nouvelles, ...prev]);
-      else alert("Aucune nouvelle alerte réglementaire détectée.");
-    } catch (e) { alert(e.message); }
+      if (nouvelles.length > 0) {
+        setAlertes(prev => [...nouvelles, ...prev]);
+        setScanMsg({ ok: true, text: `${nouvelles.length} nouvelle(s) alerte(s) importée(s).` });
+      } else {
+        setScanMsg({ ok: true, text: "Aucune nouvelle alerte réglementaire détectée." });
+      }
+    } catch (e) {
+      setScanMsg({ ok: false, text: e.message });
+    }
     setScanning(false);
   };
 
@@ -3855,6 +3862,15 @@ function VeilleReglementaire() {
           </Btn>
         </div>
       </div>
+
+      {scanMsg && (
+        <div style={{ background: scanMsg.ok ? t.successBg || t.surfaceAlt : t.dangerBg,
+          border: `1px solid ${scanMsg.ok ? t.success : t.danger}55`,
+          borderRadius: "8px", padding: "10px 16px", marginBottom: "14px",
+          color: scanMsg.ok ? t.success : t.danger, fontSize: "13px" }}>
+          {scanMsg.text}
+        </div>
+      )}
 
       {nonLues > 0 && (
         <div style={{ background: t.primaryBg, border: `1px solid ${t.primary}44`, borderRadius: "10px",

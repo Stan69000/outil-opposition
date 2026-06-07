@@ -3,6 +3,7 @@ const { getConfig } = require("../db");
 
 function getAIClient() {
   const key = getConfig("ai_api_key") || process.env.ANTHROPIC_API_KEY || "";
+  if (!key) throw new Error("Clé API Anthropic non configurée. Rendez-vous dans Configuration > IA.");
   return new Anthropic({ apiKey: key });
 }
 
