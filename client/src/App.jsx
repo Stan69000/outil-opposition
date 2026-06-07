@@ -4676,25 +4676,13 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
   const t = useT();
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
-  const markersRef = useRef([]);
   const layerRefs = useRef({});
   const [leafletReady, setLeafletReady] = useState(false);
   const [selectedPv, setSelectedPv] = useState(null);
-  const [geoForm, setGeoForm] = useState({ pvId: 0, lat: "", lng: "", adresse: "" });
-  const [geocoding, setGeocoding] = useState(false);
-  const [pvGeos, setPvGeos] = useState([]);
   const [activeLayers, setActiveLayers] = useState({ cadastre: false, plu: false });
   const [deliberations, setDeliberations] = useState([]);
   const delibMarkersRef = useRef([]);
 
-  const pvUrba = pvs.filter(p =>
-    p.objet?.toLowerCase().includes("plu") ||
-    p.objet?.toLowerCase().includes("urban") ||
-    p.objet?.toLowerCase().includes("lotissement") ||
-    p.objet?.toLowerCase().includes("construction") ||
-    p.objet?.toLowerCase().includes("permis") ||
-    p.geo
-  );
 
   useEffect(() => {
     api.deliberations.list().then(all => {
@@ -4725,21 +4713,7 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
       maxZoom: 19,
     }).addTo(map);
     mapInstance.current = map;
-
-    const geoData = pvs.filter(p => p.geo).map(p => {
-      try { return { pv: p, geo: JSON.parse(p.geo) }; } catch { return null; }
-    }).filter(Boolean);
-
-    geoData.forEach(({ pv, geo }) => {
-      const color = pv.statut === "Alerte" ? "#EF4444" : pv.statut === "Analysé" ? "#3B82F6" : "#22C55E";
-      const marker = L.circleMarker([geo.lat, geo.lng], { radius: 10, color, fillColor: color, fillOpacity: 0.7 })
-        .addTo(map)
-        .bindPopup(`<b>${pv.date}</b><br>${pv.objet}<br><small>${geo.adresse || ""}</small>`);
-      markersRef.current.push(marker);
-    });
-
-    setPvGeos(geoData);
-  }, [leafletReady, pvs]);
+  }, [leafletReady]);
 
   // Marqueurs délibérations urbanisme extraites
   useEffect(() => {
@@ -4800,43 +4774,6 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
     }
   };
 
-  const geocodeAdresse = async () => {
-    if (!geoForm.adresse) return;
-    setGeocoding(true);
-    try {
-      const resp = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(geoForm.adresse)}&limit=1`);
-      const data = await resp.json();
-      if (data.features?.length > 0) {
-        const [lng, lat] = data.features[0].geometry.coordinates;
-        setGeoForm(f => ({ ...f, lat: lat.toFixed(6), lng: lng.toFixed(6) }));
-      } else {
-        alert("Adresse non trouvée. Essayez une adresse plus précise.");
-      }
-    } catch { alert("Erreur de géocodage."); }
-    setGeocoding(false);
-  };
-
-  const saveGeo = async () => {
-    if (!geoForm.pvId || !geoForm.lat || !geoForm.lng) return;
-    const geoJson = JSON.stringify({ lat: +geoForm.lat, lng: +geoForm.lng, adresse: geoForm.adresse });
-    const updated = await api.pvs.update(geoForm.pvId, { geo: geoJson });
-
-    // Ajouter le marqueur sans recharger
-    if (mapInstance.current && updated) {
-      const L = window.L;
-      const geo = JSON.parse(geoJson);
-      const pv = pvUrba.find(p => p.id === geoForm.pvId);
-      const color = pv?.statut === "Alerte" ? "#EF4444" : pv?.statut === "Analysé" ? "#3B82F6" : "#22C55E";
-      const marker = L.circleMarker([geo.lat, geo.lng], { radius: 10, color, fillColor: color, fillOpacity: 0.7 })
-        .addTo(mapInstance.current)
-        .bindPopup(`<b>${pv?.date}</b><br>${pv?.objet}<br><small>${geo.adresse || ""}</small>`);
-      markersRef.current.push(marker);
-      mapInstance.current.setView([geo.lat, geo.lng], 16);
-      setPvGeos(prev => [...prev, { pv: { ...pv, geo: geoJson }, geo }]);
-    }
-
-    setGeoForm({ pvId: 0, lat: "", lng: "", adresse: "" });
-  };
 
   return (
     <div>
@@ -4892,33 +4829,6 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused }) {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-          <Card>
-            <p style={{ color: t.primary, fontSize: "11px", fontWeight: 700, margin: "0 0 12px 0",
-              textTransform: "uppercase" }}>Géolocaliser un PV</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              <Select value={geoForm.pvId} onChange={e => setGeoForm(f => ({ ...f, pvId: +e.target.value }))} style={{ width: "100%" }}>
-                <option value={0}>Choisir un PV…</option>
-                {pvUrba.map(p => <option key={p.id} value={p.id}>{p.date} — {p.objet.slice(0, 30)}</option>)}
-              </Select>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <Input value={geoForm.adresse} onChange={e => setGeoForm(f => ({ ...f, adresse: e.target.value }))}
-                  placeholder="Adresse ou lieu…" style={{ flex: 1 }}
-                  onKeyDown={e => e.key === "Enter" && geocodeAdresse()} />
-                <Btn onClick={geocodeAdresse} disabled={geocoding || !geoForm.adresse} variant="ghost" size="sm">
-                  {geocoding ? "…" : "Géo"}
-                </Btn>
-              </div>
-              {geoForm.lat && geoForm.lng && (
-                <p style={{ color: t.success, fontSize: "11px" }}>
-                  Coordonnées : {geoForm.lat}, {geoForm.lng}
-                </p>
-              )}
-              <Btn onClick={saveGeo} disabled={!geoForm.pvId || !geoForm.lat} variant="primary" size="sm">
-                Enregistrer la position
-              </Btn>
-            </div>
-          </Card>
-
           <Card>
             <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, margin: "0 0 10px 0",
               textTransform: "uppercase" }}>
