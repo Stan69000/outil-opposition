@@ -11,9 +11,15 @@ const insert = db.prepare(
   "INSERT INTO ai_usage_log (route, model, input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?)"
 );
 
+function resolvePrice(model) {
+  if (PRICING[model]) return PRICING[model];
+  const key = Object.keys(PRICING).find(k => model.startsWith(k));
+  return key ? PRICING[key] : { input: 0, output: 0 };
+}
+
 function trackUsage(route, model, usage) {
   try {
-    const p = PRICING[model] ?? { input: 0, output: 0 };
+    const p = resolvePrice(model);
     const cost = usage.input_tokens * p.input + usage.output_tokens * p.output;
     insert.run(route, model, usage.input_tokens, usage.output_tokens, cost);
   } catch (err) {

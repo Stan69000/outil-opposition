@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { api } from "./api.js";
 
 // Convertit une clé VAPID base64 en Uint8Array pour PushManager
@@ -1263,21 +1263,41 @@ function Failles({ failles, setFailles }) {
     setUpdating(null);
   };
 
-  const filtered = filter==="Tous" ? failles
-    : filter==="Ouvertes" ? failles.filter(f=>["Ouvert","En cours"].includes(f.statut))
-    : failles.filter(f=>f.statut==="Résolu");
+  const ouvertes = failles.filter(f=>["Ouvert","En cours"].includes(f.statut));
+  const expirantBientot = ouvertes.filter(f=>f.jours_recours!=null && f.jours_recours>=0 && f.jours_recours<=7);
+
+  const filtered = filter==="Ouvertes" ? ouvertes
+    : filter==="Historique" ? failles.filter(f=>f.statut==="Historique")
+    : filter==="Résolues" ? failles.filter(f=>f.statut==="Résolu")
+    : failles;
 
   return (
     <div>
       {aiPanel && <AIPanel {...aiPanel} onClose={()=>setAiPanel(null)} />}
+
+      {expirantBientot.length > 0 && (
+        <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}44`, borderRadius:"10px",
+          padding:"12px 16px", marginBottom:"16px" }}>
+          <p style={{ color:t.danger, fontSize:"12px", fontWeight:700, margin:"0 0 6px 0" }}>
+            Délai de recours expirant dans moins de 7 jours
+          </p>
+          {expirantBientot.map(f=>(
+            <div key={f.id} style={{ color:t.danger, fontSize:"12px", margin:"2px 0" }}>
+              · {f.titre} — expire le {f.recours_deadline} ({f.jours_recours}j)
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px" }}>
         <SectionTitle sub="Irrégularités et points de vigilance légaux">
           Failles & Irrégularités
         </SectionTitle>
         <div style={{ display:"flex", gap:"5px" }}>
-          {["Tous","Ouvertes","Résolues"].map(v=>(
-            <Btn key={v} onClick={()=>setFilter(v)} variant={filter===v?"primary":"ghost"} size="sm">{v}</Btn>
+          {["Ouvertes","Résolues","Historique","Tous"].map(v=>(
+            <Btn key={v} onClick={()=>setFilter(v)} variant={filter===v?"primary":"ghost"} size="sm">
+              {v}{v==="Ouvertes" && ouvertes.length>0 ? ` (${ouvertes.length})` : ""}
+            </Btn>
           ))}
         </div>
       </div>
@@ -1322,8 +1342,18 @@ function Failles({ failles, setFailles }) {
                   </Btn>
                 )}
                 {faille.statut==="En cours" && (
-                  <Btn disabled={updating===faille.id} onClick={()=>updateStatut(faille,"Résolu")} variant="success" size="sm">
-                    ✓ Résolu
+                  <>
+                    <Btn disabled={updating===faille.id} onClick={()=>{ if(window.confirm("Marquer cette faille comme résolue ?")) updateStatut(faille,"Résolu"); }} variant="success" size="sm">
+                      ✓ Résolu
+                    </Btn>
+                    <Btn disabled={updating===faille.id} onClick={()=>updateStatut(faille,"Ouvert")} variant="outline" size="sm">
+                      ↩ Rouvrir
+                    </Btn>
+                  </>
+                )}
+                {faille.statut==="Résolu" && (
+                  <Btn disabled={updating===faille.id} onClick={()=>updateStatut(faille,"Ouvert")} variant="outline" size="sm">
+                    ↩ Rouvrir
                   </Btn>
                 )}
               </div>
@@ -2283,17 +2313,27 @@ function Historique({ pvs, failles }) {
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────────────────
-function Dashboard({ lois, pvs, failles, setTab }) {
+function Dashboard({ lois, pvs, failles, setTab, setOpenPvId }) {
   const t = useT();
   const alertes = failles.filter(f=>["Ouvert","En cours"].includes(f.statut));
+  const hautesOuvertes = alertes.filter(f=>f.gravite==="Haute");
   const autoImported = pvs.filter(p=>p.source==="auto");
   const urgentRecours = pvs.filter(p => p.jours_recours !== undefined && p.jours_recours >= 0 && p.jours_recours <= 30);
+  const faillesExpirentBientot = alertes.filter(f => f.jours_recours != null && f.jours_recours >= 0 && f.jours_recours <= 7);
+  const totalDelibs = pvs.reduce((acc,p) => acc + (p.pdfs?.length || 0), 0);
+
+  const [engagements, setEngagements] = useState([]);
+  useEffect(() => {
+    fetch("/api/engagements").then(r=>r.ok?r.json():[]).then(d=>setEngagements(Array.isArray(d)?d:[])).catch(()=>{});
+  }, []);
+  const engPromis = engagements.filter(e=>e.statut==="Promis").length;
+  const engTenu  = engagements.filter(e=>e.statut==="Tenu").length;
 
   const STATS = [
-    { label:"Textes surveillés", value:lois.length,          color:t.primary,  icon:"§", tab:"legifrance" },
-    { label:"Séances",           value:pvs.length,           color:t.purple,   icon:"≡", tab:"pv" },
-    { label:"Failles ouvertes",  value:alertes.length,       color:t.danger,   icon:"!", tab:"failles" },
-    { label:"Auto-importées",    value:autoImported.length,  color:t.success,  icon:"↻", tab:"scraper" },
+    { label:"Séances analysées",  value:pvs.length,       color:t.primary,  icon:"≡", tab:"pv" },
+    { label:"Délibérations",      value:totalDelibs,      color:t.purple,   icon:"§", tab:"historique" },
+    { label:"Failles ouvertes",   value:alertes.length,   color:t.danger,   icon:"!", tab:"failles" },
+    { label:"Engagements suivis", value:engagements.length, color:t.success, icon:"◎", tab:"engagements" },
   ];
 
   return (
@@ -2307,10 +2347,10 @@ function Dashboard({ lois, pvs, failles, setTab }) {
         </p>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"18px" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"14px" }}>
         {STATS.map(s=>(
           <Card key={s.label} onClick={()=>setTab(s.tab)}
-            style={{ textAlign:"center", padding:"20px 14px", borderTop:`3px solid ${s.color}` }}>
+            style={{ textAlign:"center", padding:"20px 14px", borderTop:`3px solid ${s.color}`, cursor:"pointer" }}>
             <div style={{ fontSize:"18px", marginBottom:"6px", color:s.color }}>{s.icon}</div>
             <div style={{ color:s.color, fontSize:"28px", fontWeight:700, lineHeight:1 }}>{s.value}</div>
             <div style={{ color:t.textMuted, fontSize:"11px", marginTop:"6px" }}>{s.label}</div>
@@ -2318,12 +2358,51 @@ function Dashboard({ lois, pvs, failles, setTab }) {
         ))}
       </div>
 
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"10px", marginBottom:"14px" }}>
+        <Card style={{ padding:"14px 16px" }}>
+          <p style={{ color:t.textMuted, fontSize:"10px", textTransform:"uppercase", letterSpacing:"0.06em", margin:"0 0 8px 0" }}>Failles graves ouvertes</p>
+          <div style={{ display:"flex", alignItems:"baseline", gap:"6px" }}>
+            <span style={{ color:t.danger, fontSize:"24px", fontWeight:700 }}>{hautesOuvertes.length}</span>
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>/ {alertes.length} total</span>
+          </div>
+        </Card>
+        <Card style={{ padding:"14px 16px" }} onClick={()=>setTab("engagements")}>
+          <p style={{ color:t.textMuted, fontSize:"10px", textTransform:"uppercase", letterSpacing:"0.06em", margin:"0 0 8px 0" }}>Engagements non tenus</p>
+          <div style={{ display:"flex", alignItems:"baseline", gap:"6px" }}>
+            <span style={{ color:engPromis>0?t.warning||"#f59e0b":t.success, fontSize:"24px", fontWeight:700 }}>{engPromis}</span>
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>à honorer</span>
+          </div>
+        </Card>
+        <Card style={{ padding:"14px 16px" }}>
+          <p style={{ color:t.textMuted, fontSize:"10px", textTransform:"uppercase", letterSpacing:"0.06em", margin:"0 0 8px 0" }}>Recours urgents (&lt;30j)</p>
+          <div style={{ display:"flex", alignItems:"baseline", gap:"6px" }}>
+            <span style={{ color:urgentRecours.length>0?t.danger:t.success, fontSize:"24px", fontWeight:700 }}>{urgentRecours.length}</span>
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>séance(s)</span>
+          </div>
+        </Card>
+      </div>
+
+      {faillesExpirentBientot.length > 0 && (
+        <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}`, borderRadius:"10px",
+          padding:"14px 18px", marginBottom:"10px", cursor:"pointer" }}
+          onClick={() => setTab("failles")}>
+          <p style={{ color:t.danger, fontSize:"12px", fontWeight:700, margin:"0 0 6px 0" }}>
+            Délai de recours expirant bientôt — action requise
+          </p>
+          {faillesExpirentBientot.map(f => (
+            <div key={f.id} style={{ color:t.danger, fontSize:"12px", margin:"2px 0" }}>
+              · {f.titre} — {f.jours_recours}j restants (expire le {f.recours_deadline})
+            </div>
+          ))}
+        </div>
+      )}
+
       {urgentRecours.length > 0 && (
         <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}44`, borderRadius:"10px",
           padding:"14px 18px", marginBottom:"14px", cursor:"pointer" }}
           onClick={() => setTab("pv")}>
           <p style={{ color:t.danger, fontSize:"12px", fontWeight:700, margin:"0 0 6px 0" }}>
-            Délais de recours urgents ({urgentRecours.length})
+            Délais de recours urgents sur séances ({urgentRecours.length})
           </p>
           <div style={{ display:"flex", flexWrap:"wrap", gap:"6px" }}>
             {urgentRecours.map(p => (
@@ -2342,24 +2421,35 @@ function Dashboard({ lois, pvs, failles, setTab }) {
             textTransform:"uppercase", letterSpacing:"0.06em" }}>! Alertes actives</p>
           {alertes.length===0
             ? <p style={{ color:t.textMuted, fontSize:"13px" }}>Aucune alerte active.</p>
-            : alertes.map(f=>{
+            : alertes.slice(0,6).map(f=>{
               const c = graviteColor(t,f.gravite);
+              const matchPv = pvs.find(p => p.date === f.date);
               return (
-                <div key={f.id} style={{ padding:"10px 12px", marginBottom:"6px",
-                  background:c.bg, border:`1px solid ${c.border}44`, borderRadius:"8px",
-                  borderLeft:`3px solid ${c.border}` }}>
+                <div key={f.id}
+                  onClick={() => { if(matchPv) { setOpenPvId(matchPv.id); setTab("pv"); } else { setTab("failles"); } }}
+                  style={{ padding:"10px 12px", marginBottom:"6px",
+                    background:c.bg, border:`1px solid ${c.border}44`, borderRadius:"8px",
+                    borderLeft:`3px solid ${c.border}`, cursor:"pointer" }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                     <span style={{ color:c.text, fontSize:"13px", fontWeight:600, flex:1, paddingRight:"8px" }}>{f.titre}</span>
                     <Badge label={f.gravite} color={c.border} />
                   </div>
-                  <p style={{ color:t.textMuted, fontSize:"11px", margin:"4px 0 0" }}>{f.type} · {f.date}</p>
+                  <p style={{ color:t.textMuted, fontSize:"11px", margin:"4px 0 0" }}>
+                    {f.type} · {f.date}{matchPv ? " · voir séance →" : ""}
+                  </p>
                 </div>
               );
             })
           }
+          {alertes.length > 6 && (
+            <p style={{ color:t.primary, fontSize:"11px", margin:"6px 0 0", cursor:"pointer" }}
+               onClick={()=>setTab("failles")}>
+              + {alertes.length - 6} autres alertes →
+            </p>
+          )}
         </Card>
 
-        <Card>
+        <Card onClick={()=>setTab("pv")}>
           <p style={{ color:t.primary, fontSize:"11px", fontWeight:700, margin:"0 0 12px 0",
             textTransform:"uppercase", letterSpacing:"0.06em" }}>≡ Dernières séances</p>
           {[...pvs].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5).map(pv=>(
@@ -2382,6 +2472,99 @@ function Dashboard({ lois, pvs, failles, setTab }) {
             </div>
           ))}
         </Card>
+      </div>
+    </div>
+  );
+}
+
+// ── AIDE ───────────────────────────────────────────────────────────────────────
+function Aide() {
+  const t = useT();
+
+  const workflow = [
+    {
+      moment: "Chaque semaine",
+      color: t.primary,
+      etapes: [
+        { action: "Lancer la synchronisation", ou: "Sync Mairie", quoi: "Cliquer sur « Synchroniser » pour importer les nouveaux comptes-rendus publiés sur le site de la mairie. L'IA analyse automatiquement chaque nouveau PV et en extrait les délibérations, votes et anomalies." },
+        { action: "Vérifier le tableau de bord", ou: "Accueil", quoi: "Consulter les nouvelles alertes remontées. Si une faille grave est détectée, elle apparaît en rouge avec le délai de recours restant (60 jours à partir de la séance)." },
+      ],
+    },
+    {
+      moment: "Avant chaque séance",
+      color: t.purple,
+      etapes: [
+        { action: "Consulter l'ordre du jour", ou: "Procès-verbaux", quoi: "Ouvrir la séance à venir (si déjà importée) et lire les délibérations prévues. L'IA signale les points à risque juridique élevé." },
+        { action: "Préparer ses questions", ou: "Questions & CADA", quoi: "Rédiger des questions écrites sur les points sensibles de l'ordre du jour. L'IA génère le courrier officiel à envoyer au maire avant la séance." },
+        { action: "Vérifier les engagements passés", ou: "Engagements", quoi: "Contrôler si des engagements pris lors de séances précédentes sont échus ou non honorés. Peut servir de point de prise de parole en séance." },
+      ],
+    },
+    {
+      moment: "Pendant la séance",
+      color: t.warning || "#f59e0b",
+      etapes: [
+        { action: "Activer la séance live", ou: "Séance live", quoi: "Ouvrir cette vue sur son téléphone ou tablette. Saisir en temps réel les délibérations présentées, les votes (pour/contre/abstention), et ses propres interventions." },
+        { action: "Noter les anomalies observées", ou: "Séance live", quoi: "Si une convocation a été envoyée hors délai, si un point est ajouté en urgence sans justification, ou si un vote est contesté : le noter immédiatement dans la saisie." },
+      ],
+    },
+    {
+      moment: "Après chaque séance",
+      color: t.danger,
+      etapes: [
+        { action: "Ouvrir le PV analysé", ou: "Procès-verbaux", quoi: "Une fois le compte-rendu publié sur le site de la mairie et synchronisé, l'ouvrir pour voir les délibérations extraites et les anomalies détectées par l'IA." },
+        { action: "Traiter les failles détectées", ou: "Failles", quoi: "Pour chaque faille ouverte : lire la description, consulter la stratégie juridique IA, puis décider d'une action (question écrite, CADA, courrier au préfet). Passer la faille en « En cours » une fois traitée." },
+        { action: "Vérifier le délai de recours", ou: "Procès-verbaux", quoi: "Le délai de recours contentieux est de 60 jours à partir de la séance. Une alerte rouge apparaît sur le tableau de bord si ce délai approche." },
+        { action: "Mettre à jour le journal", ou: "Journal terrain", quoi: "Consigner les observations faites en dehors des séances : constats sur des chantiers, retours d'administrés, incohérences constatées sur le terrain." },
+      ],
+    },
+    {
+      moment: "Action juridique",
+      color: t.danger,
+      etapes: [
+        { action: "Rédiger un courrier officiel", ou: "Courriers", quoi: "Choisir un modèle (recours gracieux, demande de document, lettre au préfet) et laisser l'IA pré-remplir avec le contexte de la faille. Relire, adapter, envoyer." },
+        { action: "Déposer une demande CADA", ou: "Questions & CADA", quoi: "Si la mairie refuse de communiquer un document (délibération, rapport, marché public) : générer une demande CADA. La CADA dispose de 30 jours pour répondre." },
+        { action: "Saisir le préfet", ou: "Courriers", quoi: "Pour les vices de procédure graves (délibération illégale, défaut de convocation) : utiliser le modèle de déféré préfectoral. Le préfet peut annuler une délibération dans les 2 mois." },
+      ],
+    },
+    {
+      moment: "Communication citoyenne",
+      color: t.success,
+      etapes: [
+        { action: "Générer un rapport citoyen", ou: "Analyses IA", quoi: "L'IA produit un résumé accessible de la situation : irrégularités constatées, engagements non tenus, taux de conformité. À diffuser aux administrés." },
+        { action: "Suivre les engagements publics", ou: "Engagements", quoi: "Mettre à jour le statut de chaque engagement (Tenu / Non tenu) pour pouvoir présenter un bilan factuel aux habitants en fin de mandat." },
+      ],
+    },
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom:"22px" }}>
+        <h2 style={{ color:t.text, fontSize:"22px", fontWeight:700, margin:"0 0 4px 0" }}>Guide du conseiller</h2>
+        <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>
+          Quoi faire, quand, et où — {COMMUNE.nom} · Opposition municipale
+        </p>
+      </div>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:"14px" }}>
+        {workflow.map(w => (
+          <Card key={w.moment} style={{ borderLeft:`3px solid ${w.color}` }}>
+            <p style={{ color:w.color, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+              letterSpacing:"0.07em", margin:"0 0 14px 0" }}>{w.moment}</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+              {w.etapes.map((e,i) => (
+                <div key={i} style={{ display:"flex", flexDirection:"column", gap:"4px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                    <span style={{ color:t.text, fontSize:"12px", fontWeight:600 }}>{e.action}</span>
+                    <span style={{ color:w.color, fontSize:"10px", background:`${w.color}18`,
+                      padding:"2px 8px", borderRadius:"4px", fontWeight:700, whiteSpace:"nowrap",
+                      flexShrink:0 }}>{e.ou}</span>
+                  </div>
+                  <span style={{ color:t.textMuted, fontSize:"12px", lineHeight:1.55 }}>{e.quoi}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ))}
       </div>
     </div>
   );
@@ -4993,6 +5176,7 @@ const NAV_GROUPS = [
       { id:"scraper",      label:"Sync Mairie",     icon:"↻" },
       { id:"config",       label:"Configuration",   icon:"⚙" },
       { id:"couts",        label:"Coûts & Services",icon:"$" },
+      { id:"aide",         label:"Aide",            icon:"?" },
     ],
   },
 ];
@@ -5212,7 +5396,7 @@ export default function App() {
       </div>
     );
     switch(tab) {
-      case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} />;
+      case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} setOpenPvId={setOpenPvId} />;
       case "seance-live":   return <SeanceLive setPvs={setPvs} />;
       case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} openPvId={openPvId} onOpenPvDone={() => setOpenPvId(null)} onGoToCarte={(d) => { setFocusDelib(d); setTab("carte"); }} />;
       case "questions":     return <QuestionsCADA />;
@@ -5226,6 +5410,7 @@ export default function App() {
       case "config":        return <Configuration />;
       case "admin":         return <AdminPanel />;
       case "couts":         return <CoutsServices />;
+      case "aide":          return <Aide />;
       case "modeles":       return <Modeles />;
       case "courriers":     return <Courriers />;
       case "engagements":   return <Engagements pvs={pvs} />;
@@ -5263,7 +5448,7 @@ export default function App() {
 
   // Logo + titre
   const logo = (
-    <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+    <div onClick={() => setTab("dashboard")} style={{ display:"flex", alignItems:"center", gap:"10px", cursor:"pointer" }}>
       <div style={{ width:"30px", height:"30px", background:theme.primaryBg,
         border:`1.5px solid ${theme.primary}`, borderRadius:"7px",
         display:"flex", alignItems:"center", justifyContent:"center",
