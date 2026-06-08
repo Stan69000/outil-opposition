@@ -181,7 +181,7 @@ function codeLabel(code) {
     CGCT: "Code général des collectivités territoriales",
     CODE_URBANISME: "Code de l'urbanisme",
     CODE_ENVIRONNEMENT: "Code de l'environnement",
-    CJAА: "Code de justice administrative",
+    CJA: "Code de justice administrative",
   };
   return MAP[code] || code;
 }

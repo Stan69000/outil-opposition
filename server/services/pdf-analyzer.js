@@ -6,6 +6,7 @@ const { tmpdir } = require("os");
 const { join } = require("path");
 const Anthropic = require("@anthropic-ai/sdk");
 const { trackUsage } = require("./ai-tracker");
+const { assertPublicHttpUrl } = require("./safe-fetch");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -31,10 +32,12 @@ Pour is_urbanisme : true si la délibération concerne PLU, permis de construire
 Pour adresse_concernee : si is_urbanisme, extrais l'adresse, la rue, le lieu-dit ou la description géographique mentionnée. Sinon null.`;
 
 async function downloadBuffer(url) {
+  await assertPublicHttpUrl(url); // anti-SSRF : refuse IP internes / protocoles non http(s)
   const response = await axios.get(url, {
     responseType: "arraybuffer",
     timeout: 30000,
     maxContentLength: 15 * 1024 * 1024,
+    maxRedirects: 3,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; Opposition-Fleurieux/1.0)" },
   });
   return Buffer.from(response.data);

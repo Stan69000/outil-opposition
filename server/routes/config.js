@@ -2,10 +2,13 @@ const express = require("express");
 const axios = require("axios");
 const nodemailer = require("nodemailer");
 const Anthropic = require("@anthropic-ai/sdk");
-const { getAllConfig, getConfig, setConfig } = require("../db");
+const { getAllConfig, getConfig, setConfig, CONFIG_DEFAULTS } = require("../db");
 const { SENSITIVE_KEYS } = require("../services/crypto");
 
 const router = express.Router();
+
+// Seules ces clés peuvent être écrites via l'API (anti-pollution de la table config).
+const ALLOWED_KEYS = new Set([...Object.keys(CONFIG_DEFAULTS), ...SENSITIVE_KEYS]);
 
 function maskSensitive(config) {
   for (const key of SENSITIVE_KEYS) {
@@ -32,12 +35,14 @@ router.post("/", (req, res) => {
   if (!updates || typeof updates !== "object") {
     return res.status(400).json({ error: "Body JSON requis" });
   }
+  const rejected = [];
   for (const [key, value] of Object.entries(updates)) {
-    if (typeof value === "string" && !key.endsWith("_masked")) {
-      setConfig(key, value);
-    }
+    if (key.endsWith("_masked")) continue;
+    if (typeof value !== "string") continue;
+    if (!ALLOWED_KEYS.has(key)) { rejected.push(key); continue; }
+    setConfig(key, value);
   }
-  res.json({ ok: true });
+  res.json({ ok: true, ...(rejected.length ? { ignored: rejected } : {}) });
 });
 
 // ── TESTS DE CONNECTIVITÉ ──────────────────────────────────────────────────────

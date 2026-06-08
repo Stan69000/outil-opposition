@@ -1,11 +1,29 @@
 const BASE = "/api";
+const TOKEN_KEY = "app_token";
+
+export function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+}
+export function setToken(v) {
+  try { v ? localStorage.setItem(TOKEN_KEY, v) : localStorage.removeItem(TOKEN_KEY); } catch {}
+}
+// Construit les en-têtes en ajoutant le token d'auth s'il existe.
+export function authHeaders(extra) {
+  const tok = getToken();
+  return { ...(extra || {}), ...(tok ? { "x-app-token": tok } : {}) };
+}
 
 async function req(method, path, body) {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers: authHeaders(body ? { "Content-Type": "application/json" } : undefined),
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401) {
+    const err = new Error("Non autorisé — token invalide ou manquant");
+    err.code = 401;
+    throw err;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || res.statusText);
@@ -44,7 +62,7 @@ export const api = {
     analyze:     (pvId, pdfUrl, pdfNom) => req("POST", "/pdf/analyze", { pvId, pdfUrl, pdfNom }),
     exportWord:  (titre, contenu, sous_titre) => fetch("/api/pdf/export-word", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ titre, contenu, sous_titre }),
     }).then(r => r.blob()),
   },
@@ -52,9 +70,10 @@ export const api = {
     patterns:   ()      => req("GET", "/analyses/patterns"),
     budget:     ()      => req("GET", "/analyses/budget"),
     seancePrep: (date)  => req("GET", `/analyses/seance-prep${date ? `?date=${date}` : ""}`),
-    rapport:    ()      => req("GET", "/analyses/rapport"),
-    syncLog:    ()      => req("GET", "/analyses/sync-log"),
-    elus:       ()      => req("GET", "/analyses/elus"),
+    rapport:      ()    => req("GET", "/analyses/rapport"),
+    syncLog:      ()    => req("GET", "/analyses/sync-log"),
+    elus:         ()    => req("GET", "/analyses/elus"),
+    convocations: ()    => req("GET", "/analyses/convocations"),
   },
   jurisprudence: {
     search: (q, juridiction) =>

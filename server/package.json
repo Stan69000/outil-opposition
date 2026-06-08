@@ -2,6 +2,9 @@
   "name": "fleurieux-opposition-server",
   "version": "1.0.0",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
@@ -18,7 +21,6 @@
     "mammoth": "^1.12.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.10",
-    "pdf-parse": "^2.4.5",
     "web-push": "^3.6.7"
   },
   "devDependencies": {

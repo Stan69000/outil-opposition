@@ -82,7 +82,7 @@ db.prepare(`
   )
 `).run();
 
-// Questions écrites (CGCT L2121-26)
+// Questions écrites des conseillers (droit à l'information CGCT L2121-13 ; délai selon règlement intérieur)
 db.prepare(`
   CREATE TABLE IF NOT EXISTS questions_ecrites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +94,7 @@ db.prepare(`
     statut TEXT DEFAULT 'brouillon',
     reponse TEXT DEFAULT '',
     date_reponse TEXT DEFAULT '',
-    base_legale TEXT DEFAULT 'CGCT L2121-26',
+    base_legale TEXT DEFAULT 'CGCT L2121-13 · règlement intérieur',
     relances INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
   )
@@ -302,13 +302,13 @@ db.prepare(`
 const CONFIG_DEFAULTS = {
   commune_nom:              "Fleurieux-sur-l'Arbresle",
   commune_cp:               "69210",
-  commune_insee:            "69082",
-  commune_population:       "2000",
+  commune_insee:            "69086",
+  commune_population:       "2351",
   commune_departement:      "69",
   commune_pop_min:          "1500",
   commune_pop_max:          "3500",
-  commune_nb_conseillers:   "15",
-  commune_quorum:           "8",
+  commune_nb_conseillers:   "19",
+  commune_quorum:           "10",
   commune_maire:            "M. Aymeric GIRARDON",
   commune_mairie_url:       "https://fleurieuxsurlarbresle.fr",
   commune_deliberations_url:"https://fleurieuxsurlarbresle.fr/fr/rb/2187928/deliberations-prises",
@@ -369,25 +369,25 @@ if (pvCount === 0) {
   `);
   runInTransaction(() => {
     insertPv.run({
-      date: "2024-03-18", objet: "Vote du budget primitif 2024",
-      source: "manuel", statut: "Alerte", pour: 9, contre: 3, abstention: 1,
+      date: "2024-03-18", objet: "[EXEMPLE] Vote du budget primitif 2024",
+      source: "exemple", statut: "Alerte", pour: 9, contre: 3, abstention: 1,
       points: JSON.stringify(["Budget total : 2,4M€", "Hausse taxe foncière de 3%", "Voirie : 180k€"]),
-      anomalies: JSON.stringify(["Convocation reçue 4 jours avant séance (légal : 5j — CGCT L2121-10)"]),
-      notes: "Conserver la preuve de réception.",
+      anomalies: JSON.stringify(["Convocation reçue 2 jours avant séance (légal : 3 jours francs — CGCT L2121-11, commune < 3500 hab.)"]),
+      notes: "Donnée d'exemple — supprimable. Conserver la preuve de réception.",
     });
     insertPv.run({
-      date: "2024-05-06", objet: "Approbation révision du PLU",
-      source: "manuel", statut: "Alerte", pour: 10, contre: 2, abstention: 1,
+      date: "2024-05-06", objet: "[EXEMPLE] Approbation révision du PLU",
+      source: "exemple", statut: "Alerte", pour: 10, contre: 2, abstention: 1,
       points: JSON.stringify(["Classement 3 parcelles zone UA", "Suppression espace vert protégé"]),
-      anomalies: JSON.stringify(["Suppression EBC sans enquête publique préalable (Code Urb. L151-23)"]),
-      notes: "Potentielle illégalité — consulter dossier.",
+      anomalies: JSON.stringify(["Suppression d'un Espace Boisé Classé sans procédure de révision/enquête publique (Code Urb. L113-1 et L113-2)"]),
+      notes: "Donnée d'exemple — supprimable. Potentielle illégalité, consulter le dossier.",
     });
     insertPv.run({
-      date: "2024-06-17", objet: "Marché entretien espaces verts",
-      source: "manuel", statut: "Conforme", pour: 11, contre: 2, abstention: 0,
-      points: JSON.stringify(["Marché Vertz'O : 85k€/an", "Durée 3 ans renouvelable"]),
+      date: "2024-06-17", objet: "[EXEMPLE] Marché entretien espaces verts",
+      source: "exemple", statut: "Conforme", pour: 11, contre: 2, abstention: 0,
+      points: JSON.stringify(["Marché : 85k€/an", "Durée 3 ans renouvelable"]),
       anomalies: JSON.stringify([]),
-      notes: "",
+      notes: "Donnée d'exemple — supprimable.",
     });
   });
 }
@@ -400,15 +400,15 @@ if (failleCount === 0) {
   `);
   runInTransaction(() => {
     insertFaille.run({
-      type: "Légalité", gravite: "Haute", statut: "Ouvert", date: "2024-03-18", cgct: "L2121-10",
-      titre: "Délai de convocation non respecté — 18/03/2024",
-      description: "Convocation reçue 4 jours avant la séance. Délai légal : 5 jours minimum (CGCT L2121-10).",
+      type: "Légalité", gravite: "Haute", statut: "Ouvert", date: "2024-03-18", cgct: "L2121-11",
+      titre: "[Exemple] Délai de convocation non respecté — 18/03/2024",
+      description: "Convocation reçue 2 jours avant la séance. Délai légal : 3 jours francs minimum pour les communes de moins de 3500 habitants (CGCT L2121-11).",
       conseil: "Recours gracieux au maire par LRAR. Si récidive : déféré préfectoral. Conserver preuve de réception.",
     });
     insertFaille.run({
-      type: "Urbanisme", gravite: "Haute", statut: "En cours", date: "2024-05-06", cgct: "L151-23",
-      titre: "Suppression EBC sans enquête publique",
-      description: "La suppression d'un Espace Boisé Classé au PLU nécessite une enquête publique préalable (Code Urb. L151-23).",
+      type: "Urbanisme", gravite: "Haute", statut: "En cours", date: "2024-05-06", cgct: "L113-1",
+      titre: "[Exemple] Suppression EBC sans procédure régulière",
+      description: "La suppression d'un Espace Boisé Classé impose une procédure de révision du PLU avec enquête publique (Code Urb. L113-1 et L113-2).",
       conseil: "Recours gracieux dans les 2 mois. Saisine Tribunal Administratif de Lyon possible.",
     });
     insertFaille.run({

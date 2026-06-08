@@ -7,7 +7,7 @@ const router = express.Router();
 // VAPID keys (générées une seule fois, stockées dans .env)
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
-    `mailto:${process.env.ALERT_EMAIL || "bouchet.stanislas@gmail.com"}`,
+    process.env.VAPID_SUBJECT || `mailto:${process.env.ALERT_EMAIL || "contact@example.org"}`,
     process.env.VAPID_PUBLIC_KEY,
     process.env.VAPID_PRIVATE_KEY
   );

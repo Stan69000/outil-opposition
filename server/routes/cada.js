@@ -5,7 +5,7 @@ const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 
-// Délai légal CADA : 1 mois pour réponse (loi 1978, art. 17)
+// Délai légal CADA : 1 mois pour répondre, silence = refus tacite (CRPA art. R311-12 et R311-13)
 function dateLimiteCada(dateDemande) {
   if (!dateDemande) return "";
   const d = new Date(dateDemande);

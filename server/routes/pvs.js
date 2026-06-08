@@ -12,7 +12,7 @@ router.post("/", (req, res) => {
   const { date, objet, source = "manuel", statut, votes = {}, points = [], anomalies = [], notes = "", url_source = "" } = req.body;
   if (!date || !objet) return res.status(400).json({ error: "date et objet requis" });
 
-  const finalStatut = statut || (anomalies.length > 0 ? "Alerte" : "Analysé");
+  const finalStatut = statut || "Analysé";
   const stmt = db.prepare(`
     INSERT INTO pvs (date, objet, source, statut, votes_pour, votes_contre, votes_abstention, points, anomalies, notes, url_source)
     VALUES (@date, @objet, @source, @statut, @pour, @contre, @abstention, @points, @anomalies, @notes, @url_source)

@@ -4,8 +4,26 @@ const { db } = require("../db");
 const router = express.Router();
 
 router.get("/", (req, res) => {
+  // Auto-basculement : failles Ouvert dont le délai de 60j est dépassé → Historique
+  db.prepare(`
+    UPDATE failles SET statut = 'Historique'
+    WHERE statut = 'Ouvert'
+    AND date(date, '+60 days') < date('now')
+  `).run();
+
   const rows = db.prepare("SELECT * FROM failles ORDER BY date DESC").all();
-  res.json(rows);
+
+  // Ajouter jours_recours sur chaque faille Ouvert/En cours
+  const today = new Date().toISOString().slice(0, 10);
+  const result = rows.map(f => {
+    if (!["Ouvert", "En cours"].includes(f.statut)) return f;
+    const deadline = new Date(f.date);
+    deadline.setDate(deadline.getDate() + 60);
+    const jours = Math.ceil((deadline - new Date(today)) / 86400000);
+    return { ...f, jours_recours: jours, recours_deadline: deadline.toISOString().slice(0, 10) };
+  });
+
+  res.json(result);
 });
 
 router.post("/", (req, res) => {

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
-import { api } from "./api.js";
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import "leaflet/dist/leaflet.css";
+import { api, authHeaders, getToken, setToken } from "./api.js";
 
 // Convertit une clé VAPID base64 en Uint8Array pour PushManager
 function urlBase64ToUint8Array(base64String) {
@@ -7,6 +8,14 @@ function urlBase64ToUint8Array(base64String) {
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const raw = atob(base64);
   return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
+}
+
+// Adresse géocodée d'une délibération, parse JSON sécurisé.
+function geoAdresse(d) {
+  try {
+    if (d.geo) return JSON.parse(d.geo)?.adresse || d.adresse || "";
+  } catch (_) {}
+  return d.adresse || "";
 }
 
 // ── DONNÉES FIXES ──────────────────────────────────────────────────────────────
@@ -31,8 +40,8 @@ const CONSEIL = {
   ],
 };
 const CGCT_WATCH = [
-  { id:"L2121-10", titre:"Convocation — délai légal 5 jours minimum", alerte:"Vérifier date d'envoi vs date de séance" },
-  { id:"L2121-11", titre:"Urgence — délai réduit à 1 jour",           alerte:"Surveiller les abus de procédure d'urgence" },
+  { id:"L2121-11", titre:"Convocation — délai légal 3 jours francs (commune < 3500 hab.)", alerte:"Vérifier date d'envoi vs date de séance" },
+  { id:"L2121-11-urg", titre:"Urgence — délai réduit à 1 jour franc",  alerte:"Surveiller les abus de procédure d'urgence" },
   { id:"L2121-25", titre:"Publication des délibérations sous 8 jours", alerte:"Contrôler la mise en ligne sur le site mairie" },
   { id:"L2122-22", titre:"Délégations du conseil au maire",            alerte:"Liste des actes délégués à contrôler en séance" },
   { id:"L2313-1",  titre:"Transparence financière — comptes publics",  alerte:"Comptes obligatoirement publiés et accessibles" },
@@ -218,12 +227,15 @@ function Spinner({ label="" }) {
   );
 }
 
-function SectionTitle({ children, sub }) {
+function SectionTitle({ children, sub, title, subtitle }) {
   const t = useT();
+  // Accepte aussi les props `title`/`subtitle` (compat anciens appels).
+  const heading = children ?? title;
+  const subText = sub ?? subtitle;
   return (
     <div style={{ marginBottom:"20px" }}>
-      <h2 style={{ color:t.text, fontSize:"20px", fontWeight:700, margin:"0 0 4px 0" }}>{children}</h2>
-      {sub && <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>{sub}</p>}
+      <h2 style={{ color:t.text, fontSize:"20px", fontWeight:700, margin:"0 0 4px 0" }}>{heading}</h2>
+      {subText && <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>{subText}</p>}
     </div>
   );
 }
@@ -342,10 +354,11 @@ function PdfSeanceAnalyzer({ pv, onDone }) {
     try {
       const res = await fetch("/api/pdf/analyze-seance", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ pvId: pv.id }),
         signal: ctrl.signal,
       });
+      if (!res.ok || !res.body) throw new Error(`Serveur : ${res.status}`);
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -427,8 +440,10 @@ function DelibExtractor({ pv, onDone, onGoToCarte }) {
     try {
       const res = await fetch(`/api/deliberations/extract/${pv.id}`, {
         method: "POST",
+        headers: authHeaders(),
         signal: ctrl.signal,
       });
+      if (!res.ok || !res.body) throw new Error(`Serveur : ${res.status}`);
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -515,8 +530,8 @@ function DelibExtractor({ pv, onDone, onGoToCarte }) {
                     {d.is_urba && (
                       <span style={{ fontSize: "10px", color: "#fff", background: t.primary,
                         padding: "1px 6px", borderRadius: "10px", fontWeight: 600,
-                        cursor: hasGeo ? "pointer" : "default",
-                        title: hasGeo ? d.geo && JSON.parse(d.geo)?.adresse : d.adresse }}
+                        cursor: hasGeo ? "pointer" : "default" }}
+                        title={geoAdresse(d)}
                         onClick={e => { e.stopPropagation(); setExpanded(isExp ? null : d.id); }}>
                         Urba{hasGeo ? " ·" : ""}
                       </span>
@@ -830,7 +845,7 @@ function VeilleLegifrance({ lois, setLois }) {
         const d = await searchViaAI(q);
         setResults(d.results||[]); setTotal(d.total||0);
       } else {
-        const resp = await fetch(`/api/legifrance/search?q=${encodeURIComponent(q)}&fond=${f}`);
+        const resp = await fetch(`/api/legifrance/search?q=${encodeURIComponent(q)}&fond=${f}`, { headers: authHeaders() });
         const d = await resp.json();
         if (!resp.ok) {
           if (d.subscriptionRequired) {
@@ -1263,21 +1278,41 @@ function Failles({ failles, setFailles }) {
     setUpdating(null);
   };
 
-  const filtered = filter==="Tous" ? failles
-    : filter==="Ouvertes" ? failles.filter(f=>["Ouvert","En cours"].includes(f.statut))
-    : failles.filter(f=>f.statut==="Résolu");
+  const ouvertes = failles.filter(f=>["Ouvert","En cours"].includes(f.statut));
+  const expirantBientot = ouvertes.filter(f=>f.jours_recours!=null && f.jours_recours>=0 && f.jours_recours<=7);
+
+  const filtered = filter==="Ouvertes" ? ouvertes
+    : filter==="Historique" ? failles.filter(f=>f.statut==="Historique")
+    : filter==="Résolues" ? failles.filter(f=>f.statut==="Résolu")
+    : failles;
 
   return (
     <div>
       {aiPanel && <AIPanel {...aiPanel} onClose={()=>setAiPanel(null)} />}
+
+      {expirantBientot.length > 0 && (
+        <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}44`, borderRadius:"10px",
+          padding:"12px 16px", marginBottom:"16px" }}>
+          <p style={{ color:t.danger, fontSize:"12px", fontWeight:700, margin:"0 0 6px 0" }}>
+            Délai de recours expirant dans moins de 7 jours
+          </p>
+          {expirantBientot.map(f=>(
+            <div key={f.id} style={{ color:t.danger, fontSize:"12px", margin:"2px 0" }}>
+              · {f.titre} — expire le {f.recours_deadline} ({f.jours_recours}j)
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px" }}>
         <SectionTitle sub="Irrégularités et points de vigilance légaux">
           Failles & Irrégularités
         </SectionTitle>
         <div style={{ display:"flex", gap:"5px" }}>
-          {["Tous","Ouvertes","Résolues"].map(v=>(
-            <Btn key={v} onClick={()=>setFilter(v)} variant={filter===v?"primary":"ghost"} size="sm">{v}</Btn>
+          {["Ouvertes","Résolues","Historique","Tous"].map(v=>(
+            <Btn key={v} onClick={()=>setFilter(v)} variant={filter===v?"primary":"ghost"} size="sm">
+              {v}{v==="Ouvertes" && ouvertes.length>0 ? ` (${ouvertes.length})` : ""}
+            </Btn>
           ))}
         </div>
       </div>
@@ -1322,8 +1357,18 @@ function Failles({ failles, setFailles }) {
                   </Btn>
                 )}
                 {faille.statut==="En cours" && (
-                  <Btn disabled={updating===faille.id} onClick={()=>updateStatut(faille,"Résolu")} variant="success" size="sm">
-                    ✓ Résolu
+                  <>
+                    <Btn disabled={updating===faille.id} onClick={()=>{ if(window.confirm("Marquer cette faille comme résolue ?")) updateStatut(faille,"Résolu"); }} variant="success" size="sm">
+                      ✓ Résolu
+                    </Btn>
+                    <Btn disabled={updating===faille.id} onClick={()=>updateStatut(faille,"Ouvert")} variant="outline" size="sm">
+                      ↩ Rouvrir
+                    </Btn>
+                  </>
+                )}
+                {faille.statut==="Résolu" && (
+                  <Btn disabled={updating===faille.id} onClick={()=>updateStatut(faille,"Ouvert")} variant="outline" size="sm">
+                    ↩ Rouvrir
                   </Btn>
                 )}
               </div>
@@ -1472,6 +1517,9 @@ function Analyses({ lois, pvs, failles }) {
   const [budget, setBudget] = useState(null);
   const [loadingBudget, setLoadingBudget] = useState(false);
 
+  // Contrôle des délais de convocation
+  const [convoc, setConvoc] = useState(null);
+
   // Fiche séance
   const [ficheDate, setFicheDate] = useState("");
   const [fiche, setFiche] = useState(null);
@@ -1494,6 +1542,12 @@ function Analyses({ lois, pvs, failles }) {
     catch (e) { setBudget({ error: e.message }); }
     setLoadingBudget(false);
   };
+
+  const loadConvoc = async () => {
+    try { setConvoc(await api.analyses.convocations()); }
+    catch (e) { setConvoc({ error: e.message }); }
+  };
+  useEffect(() => { if (subTab === "convocations" && !convoc) loadConvoc(); }, [subTab]);
 
   const loadFiche = async () => {
     if (!ficheDate) return;
@@ -1518,7 +1572,7 @@ function Analyses({ lois, pvs, failles }) {
       </SectionTitle>
 
       <SubTabs
-        tabs={[["rapide","Analyses rapides"],["tendances","Tendances"],["budget","Budget"],["fiche","Fiche séance"],["rapport","Rapport citoyen"]]}
+        tabs={[["rapide","Analyses rapides"],["tendances","Tendances"],["budget","Budget"],["convocations","Délais convocation"],["fiche","Fiche séance"],["rapport","Rapport citoyen"]]}
         active={subTab} onSelect={setSubTab}
       />
 
@@ -1609,54 +1663,79 @@ function Analyses({ lois, pvs, failles }) {
       {subTab === "budget" && (
         <div>
           <p style={{ color:t.textSec, fontSize:"13px", marginBottom:"16px" }}>
-            Extrait les données budgétaires des délibérations analysées par IA et les compare inter-années.
+            Données officielles OFGL (comptes individuels des communes), comparées inter-années.
           </p>
           {!budget && !loadingBudget && (
             <Card style={{ textAlign:"center", padding:"40px" }}>
               <p style={{ color:t.textMuted, fontSize:"13px", marginBottom:"16px" }}>
-                Nécessite des délibérations budget préalablement analysées
+                Dépenses de fonctionnement et d'investissement par année, source OFGL.
               </p>
               <Btn onClick={loadBudget} variant="primary" size="lg">
-                Analyser le budget
+                Charger le budget
               </Btn>
             </Card>
           )}
-          {loadingBudget && <Spinner label="Extraction des données budgétaires…" />}
+          {loadingBudget && <Spinner label="Chargement des données budgétaires (OFGL)…" />}
           {budget?.error && (
             <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}44`, borderRadius:"8px", padding:"16px", color:t.danger }}>
               Erreur : {budget.error}
             </div>
           )}
           {budget && !budget.error && (
+            budget.annees && budget.annees.length > 0
+              ? <BudgetAnalyse data={budget} />
+              : <Card><EmptyState icon="$" text={budget.message || "Aucune donnée budgétaire disponible."} /></Card>
+          )}
+        </div>
+      )}
+
+      {subTab === "convocations" && (
+        <div>
+          {!convoc && <Spinner label="Contrôle des délais de convocation…" />}
+          {convoc?.error && (
+            <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}44`, borderRadius:"8px", padding:"16px", color:t.danger }}>
+              Erreur : {convoc.error}
+            </div>
+          )}
+          {convoc && !convoc.error && (
             <>
-              {budget.annees && budget.annees.length > 0 ? (
+              <p style={{ color:t.textSec, fontSize:"13px", marginBottom:"4px" }}>
+                Délai légal : <b>{convoc.seuil} jours francs</b> ({convoc.article}).
+              </p>
+              <p style={{ color:t.textMuted, fontSize:"11px", marginBottom:"16px" }}>{convoc.methode}</p>
+
+              {convoc.total_controlees === 0 ? (
+                <Card><EmptyState icon="⏱" text="Aucune date de convocation trouvée dans les CR. Lancez l'extraction des délibérations pour activer le contrôle." /></Card>
+              ) : (
                 <>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:"10px", marginBottom:"16px" }}>
-                    {budget.annees.map(a => (
-                      <Card key={a.annee} style={{ textAlign:"center", padding:"16px" }} hover={false}>
-                        <p style={{ color:t.textMuted, fontSize:"11px", margin:"0 0 4px 0" }}>{a.annee}</p>
-                        {a.investissement && <p style={{ color:t.primary, fontSize:"13px", fontWeight:700, margin:"0 0 2px 0" }}>
-                          Inv: {(a.investissement / 1000).toFixed(0)}k€
-                        </p>}
-                        {a.fonctionnement && <p style={{ color:t.success, fontSize:"12px", margin:0 }}>
-                          Fonc: {(a.fonctionnement / 1000).toFixed(0)}k€
-                        </p>}
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:"10px", marginBottom:"16px" }}>
+                    {[
+                      { label:"Séances contrôlées", value:convoc.total_controlees },
+                      { label:"Conformes", value:convoc.conformes, color:t.success },
+                      { label:"Non conformes", value:convoc.non_conformes, color:convoc.non_conformes>0?t.danger:t.textMuted },
+                    ].map(c=>(
+                      <Card key={c.label} hover={false} style={{ textAlign:"center", padding:"14px" }}>
+                        <div style={{ fontSize:"20px", fontWeight:700, color:c.color||t.text }}>{c.value}</div>
+                        <div style={{ fontSize:"11px", color:t.textMuted, marginTop:"4px" }}>{c.label}</div>
                       </Card>
                     ))}
                   </div>
-                  {budget.analyse && (
-                    <Card>
-                      <p style={{ color:t.textMuted, fontSize:"11px", fontWeight:600, margin:"0 0 10px 0", textTransform:"uppercase" }}>Analyse IA</p>
-                      <div style={{ color:t.textSec, fontSize:"13px", lineHeight:"1.8", whiteSpace:"pre-wrap" }}>
-                        {budget.analyse}
-                      </div>
-                    </Card>
-                  )}
+                  <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
+                    {convoc.seances.map(s=>(
+                      <Card key={s.pv_id} hover={false} style={{ borderLeft:`3px solid ${s.conforme?t.success:t.danger}` }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
+                          <div style={{ minWidth:0 }}>
+                            <div style={{ fontSize:"13px", fontWeight:600, color:t.text }}>Séance du {s.date_seance}</div>
+                            <div style={{ fontSize:"11px", color:t.textMuted }}>
+                              Convocation : {s.convocation} · {s.jours_francs} jour(s) franc(s)
+                            </div>
+                          </div>
+                          <Badge label={s.conforme ? "Conforme" : `Non conforme (< ${convoc.seuil}j)`} color={s.conforme?t.success:t.danger} />
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
                 </>
-              ) : (
-                <Card>
-                  <EmptyState icon="$" text={budget.message || "Aucune donnée budgétaire extraite. Analysez d'abord les délibérations budget avec IA."} />
-                </Card>
               )}
             </>
           )}
@@ -2058,6 +2137,108 @@ function StatistiquesTab({ pvs, failles, questions, cadas, courriers, engagement
 }
 
 // ── BUDGET TAB ────────────────────────────────────────────────────────────────
+// Vue analytique du budget (historique OFGL + indicateurs + comparaison strate)
+function BudgetAnalyse({ data }) {
+  const t = useT();
+  const { annees = [], indicateurs: ind, comparaison: cmp, source, commune } = data;
+  const fmtEur = n => n >= 1e6 ? `${(n / 1e6).toFixed(2)} M€` : n >= 1000 ? `${Math.round(n / 1000)} k€` : `${n} €`;
+  const fmtSign = n => n == null ? "—" : `${n > 0 ? "+" : ""}${n}%`;
+
+  const cards = ind ? [
+    { label: `Épargne brute ${ind.annee}`, value: fmtEur(ind.epargne_brute), color: t.success },
+    { label: "Taux d'épargne", value: ind.taux_epargne != null ? `${ind.taux_epargne}%` : "—", color: t.primary, hint: "épargne / recettes fonct." },
+    { label: "Encours de dette", value: fmtEur(ind.encours_dette), color: t.warning },
+    { label: "Capacité désendett.", value: ind.capacite_desendettement != null ? `${ind.capacite_desendettement} ans` : "—", color: (ind.capacite_desendettement != null && ind.capacite_desendettement > 8) ? t.danger : t.text, hint: "dette / épargne brute" },
+    { label: "Évol. fonctionnement", value: fmtSign(ind.evolution_fonctionnement_pct), color: (ind.evolution_fonctionnement_pct > 0 ? t.danger : t.success), hint: "vs année précédente" },
+  ] : [];
+
+  const cmpRows = [
+    { key: "depenses_fonctionnement_hbt", label: "Dépenses fonct./hab" },
+    { key: "recettes_fonctionnement_hbt", label: "Recettes fonct./hab" },
+    { key: "depenses_investissement_hbt", label: "Investissement/hab" },
+    { key: "encours_dette_hbt", label: "Encours dette/hab" },
+  ];
+
+  return (
+    <div>
+      <p style={{ color: t.textMuted, fontSize: "11px", marginBottom: "14px" }}>
+        Source : {source}{commune ? ` · ${commune}` : ""}{ind ? ` · dernier exercice ${ind.annee}` : ""}
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: "10px", marginBottom: "18px" }}>
+        {cards.map(c => (
+          <Card key={c.label} hover={false} style={{ padding: "14px" }}>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: c.color, fontVariantNumeric: "tabular-nums" }}>{c.value}</div>
+            <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "3px" }}>{c.label}</div>
+            {c.hint && <div style={{ fontSize: "9px", color: t.textMuted, marginTop: "1px" }}>{c.hint}</div>}
+          </Card>
+        ))}
+      </div>
+
+      {annees.length > 0 && (
+        <Card style={{ marginBottom: "16px" }}>
+          <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 14px 0" }}>
+            Évolution {annees[0].annee}–{annees[annees.length - 1].annee}
+          </p>
+          {annees.map(a => {
+            const total = a.fonctionnement + a.investissement;
+            const pctF = total > 0 ? (a.fonctionnement / total) * 100 : 0;
+            const pctI = total > 0 ? (a.investissement / total) * 100 : 0;
+            return (
+              <div key={a.annee} style={{ marginBottom: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: t.text }}>{a.annee}</span>
+                  <span style={{ fontSize: "11px", color: t.textMuted }}>Recettes {fmtEur(a.recettes)} · Dette {fmtEur(a.dette)}</span>
+                </div>
+                <div style={{ height: "10px", background: t.border, borderRadius: "5px", overflow: "hidden", display: "flex" }}>
+                  <div style={{ width: `${pctF}%`, background: t.primary }} />
+                  <div style={{ width: `${pctI}%`, background: t.success }} />
+                </div>
+                <div style={{ display: "flex", gap: "12px", marginTop: "3px" }}>
+                  <span style={{ fontSize: "10px", color: t.primary }}>Fonct. {fmtEur(a.fonctionnement)}</span>
+                  <span style={{ fontSize: "10px", color: t.success }}>Invest. {fmtEur(a.investissement)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {cmp && cmp.similaires_count > 0 && (
+        <Card>
+          <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 4px 0" }}>
+            Comparaison strate ({cmp.annee})
+          </p>
+          <p style={{ color: t.textMuted, fontSize: "11px", margin: "0 0 14px 0" }}>{cmp.similaires_count} communes similaires du département · €/habitant</p>
+          {cmpRows.map(({ key, label }) => {
+            const fl = cmp.fleurieux?.[key], moy = cmp.moyennes?.[key];
+            if (fl == null || moy == null) return null;
+            const max = Math.max(fl, moy, 1);
+            const ecart = moy ? Math.round((fl - moy) / moy * 100) : null;
+            const worseIfHigher = key !== "recettes_fonctionnement_hbt";
+            const flColor = ecart == null ? t.text : (worseIfHigher ? (fl > moy ? t.danger : t.success) : t.text);
+            return (
+              <div key={key} style={{ marginBottom: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                  <span style={{ fontSize: "12px", color: t.text }}>{label}</span>
+                  <span style={{ fontSize: "11px", color: t.textMuted }}>
+                    <b style={{ color: flColor }}>{fl} €</b> vs moy. {moy} € {ecart != null && <span style={{ color: flColor }}>({ecart > 0 ? "+" : ""}{ecart}%)</span>}
+                  </span>
+                </div>
+                <div style={{ position: "relative", height: "8px" }}>
+                  <div style={{ position: "absolute", inset: 0, background: t.border, borderRadius: "4px" }} />
+                  <div style={{ position: "absolute", top: 0, height: "8px", width: `${(moy / max) * 100}%`, background: t.textMuted, borderRadius: "4px", opacity: 0.5 }} />
+                  <div style={{ position: "absolute", top: 0, height: "8px", width: `${(fl / max) * 100}%`, background: flColor, borderRadius: "4px" }} />
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function BudgetTab() {
   const t = useT();
   const [budget, setBudget] = useState(null);
@@ -2077,7 +2258,7 @@ function BudgetTab() {
       <Card style={{ textAlign:"center", padding:"40px 20px" }}>
         <p style={{ color:t.textMuted, fontSize:"13px", marginBottom:"8px" }}>Aucune donnée budgétaire disponible.</p>
         <p style={{ color:t.textMuted, fontSize:"12px" }}>
-          Analysez un PDF budgétaire depuis <strong>Analyses &gt; Budget</strong> pour alimenter cette vue.
+          Données OFGL indisponibles pour cette commune (vérifiez le code INSEE en configuration).
         </p>
       </Card>
     );
@@ -2150,7 +2331,7 @@ function CoutsIATab() {
   const [err, setErr]         = useState(null);
 
   useEffect(()=>{
-    fetch("/api/admin/usage")
+    fetch("/api/admin/usage", { headers: authHeaders() })
       .then(r=>r.json())
       .then(d=>{ setData(d); setLoading(false); })
       .catch(e=>{ setErr(e.message); setLoading(false); });
@@ -2283,17 +2464,27 @@ function Historique({ pvs, failles }) {
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────────────────
-function Dashboard({ lois, pvs, failles, setTab }) {
+function Dashboard({ lois, pvs, failles, setTab, setOpenPvId }) {
   const t = useT();
   const alertes = failles.filter(f=>["Ouvert","En cours"].includes(f.statut));
+  const hautesOuvertes = alertes.filter(f=>f.gravite==="Haute");
   const autoImported = pvs.filter(p=>p.source==="auto");
   const urgentRecours = pvs.filter(p => p.jours_recours !== undefined && p.jours_recours >= 0 && p.jours_recours <= 30);
+  const faillesExpirentBientot = alertes.filter(f => f.jours_recours != null && f.jours_recours >= 0 && f.jours_recours <= 7);
+  const totalDelibs = pvs.reduce((acc,p) => acc + (p.pdfs?.length || 0), 0);
+
+  const [engagements, setEngagements] = useState([]);
+  useEffect(() => {
+    fetch("/api/engagements", { headers: authHeaders() }).then(r=>r.ok?r.json():[]).then(d=>setEngagements(Array.isArray(d)?d:[])).catch(()=>{});
+  }, []);
+  const engPromis = engagements.filter(e=>e.statut==="Promis").length;
+  const engTenu  = engagements.filter(e=>e.statut==="Tenu").length;
 
   const STATS = [
-    { label:"Textes surveillés", value:lois.length,          color:t.primary,  icon:"§", tab:"legifrance" },
-    { label:"Séances",           value:pvs.length,           color:t.purple,   icon:"≡", tab:"pv" },
-    { label:"Failles ouvertes",  value:alertes.length,       color:t.danger,   icon:"!", tab:"failles" },
-    { label:"Auto-importées",    value:autoImported.length,  color:t.success,  icon:"↻", tab:"scraper" },
+    { label:"Séances analysées",  value:pvs.length,       color:t.primary,  icon:"≡", tab:"pv" },
+    { label:"Délibérations",      value:totalDelibs,      color:t.purple,   icon:"§", tab:"historique" },
+    { label:"Failles ouvertes",   value:alertes.length,   color:t.danger,   icon:"!", tab:"failles" },
+    { label:"Engagements suivis", value:engagements.length, color:t.success, icon:"◎", tab:"engagements" },
   ];
 
   return (
@@ -2307,10 +2498,10 @@ function Dashboard({ lois, pvs, failles, setTab }) {
         </p>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"18px" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"14px" }}>
         {STATS.map(s=>(
           <Card key={s.label} onClick={()=>setTab(s.tab)}
-            style={{ textAlign:"center", padding:"20px 14px", borderTop:`3px solid ${s.color}` }}>
+            style={{ textAlign:"center", padding:"20px 14px", borderTop:`3px solid ${s.color}`, cursor:"pointer" }}>
             <div style={{ fontSize:"18px", marginBottom:"6px", color:s.color }}>{s.icon}</div>
             <div style={{ color:s.color, fontSize:"28px", fontWeight:700, lineHeight:1 }}>{s.value}</div>
             <div style={{ color:t.textMuted, fontSize:"11px", marginTop:"6px" }}>{s.label}</div>
@@ -2318,12 +2509,51 @@ function Dashboard({ lois, pvs, failles, setTab }) {
         ))}
       </div>
 
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"10px", marginBottom:"14px" }}>
+        <Card style={{ padding:"14px 16px" }}>
+          <p style={{ color:t.textMuted, fontSize:"10px", textTransform:"uppercase", letterSpacing:"0.06em", margin:"0 0 8px 0" }}>Failles graves ouvertes</p>
+          <div style={{ display:"flex", alignItems:"baseline", gap:"6px" }}>
+            <span style={{ color:t.danger, fontSize:"24px", fontWeight:700 }}>{hautesOuvertes.length}</span>
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>/ {alertes.length} total</span>
+          </div>
+        </Card>
+        <Card style={{ padding:"14px 16px" }} onClick={()=>setTab("engagements")}>
+          <p style={{ color:t.textMuted, fontSize:"10px", textTransform:"uppercase", letterSpacing:"0.06em", margin:"0 0 8px 0" }}>Engagements non tenus</p>
+          <div style={{ display:"flex", alignItems:"baseline", gap:"6px" }}>
+            <span style={{ color:engPromis>0?t.warning||"#f59e0b":t.success, fontSize:"24px", fontWeight:700 }}>{engPromis}</span>
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>à honorer</span>
+          </div>
+        </Card>
+        <Card style={{ padding:"14px 16px" }}>
+          <p style={{ color:t.textMuted, fontSize:"10px", textTransform:"uppercase", letterSpacing:"0.06em", margin:"0 0 8px 0" }}>Recours urgents (&lt;30j)</p>
+          <div style={{ display:"flex", alignItems:"baseline", gap:"6px" }}>
+            <span style={{ color:urgentRecours.length>0?t.danger:t.success, fontSize:"24px", fontWeight:700 }}>{urgentRecours.length}</span>
+            <span style={{ color:t.textMuted, fontSize:"11px" }}>séance(s)</span>
+          </div>
+        </Card>
+      </div>
+
+      {faillesExpirentBientot.length > 0 && (
+        <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}`, borderRadius:"10px",
+          padding:"14px 18px", marginBottom:"10px", cursor:"pointer" }}
+          onClick={() => setTab("failles")}>
+          <p style={{ color:t.danger, fontSize:"12px", fontWeight:700, margin:"0 0 6px 0" }}>
+            Délai de recours expirant bientôt — action requise
+          </p>
+          {faillesExpirentBientot.map(f => (
+            <div key={f.id} style={{ color:t.danger, fontSize:"12px", margin:"2px 0" }}>
+              · {f.titre} — {f.jours_recours}j restants (expire le {f.recours_deadline})
+            </div>
+          ))}
+        </div>
+      )}
+
       {urgentRecours.length > 0 && (
         <div style={{ background:t.dangerBg, border:`1px solid ${t.danger}44`, borderRadius:"10px",
           padding:"14px 18px", marginBottom:"14px", cursor:"pointer" }}
           onClick={() => setTab("pv")}>
           <p style={{ color:t.danger, fontSize:"12px", fontWeight:700, margin:"0 0 6px 0" }}>
-            Délais de recours urgents ({urgentRecours.length})
+            Délais de recours urgents sur séances ({urgentRecours.length})
           </p>
           <div style={{ display:"flex", flexWrap:"wrap", gap:"6px" }}>
             {urgentRecours.map(p => (
@@ -2342,24 +2572,35 @@ function Dashboard({ lois, pvs, failles, setTab }) {
             textTransform:"uppercase", letterSpacing:"0.06em" }}>! Alertes actives</p>
           {alertes.length===0
             ? <p style={{ color:t.textMuted, fontSize:"13px" }}>Aucune alerte active.</p>
-            : alertes.map(f=>{
+            : alertes.slice(0,6).map(f=>{
               const c = graviteColor(t,f.gravite);
+              const matchPv = pvs.find(p => p.date === f.date);
               return (
-                <div key={f.id} style={{ padding:"10px 12px", marginBottom:"6px",
-                  background:c.bg, border:`1px solid ${c.border}44`, borderRadius:"8px",
-                  borderLeft:`3px solid ${c.border}` }}>
+                <div key={f.id}
+                  onClick={() => { if(matchPv) { setOpenPvId(matchPv.id); setTab("pv"); } else { setTab("failles"); } }}
+                  style={{ padding:"10px 12px", marginBottom:"6px",
+                    background:c.bg, border:`1px solid ${c.border}44`, borderRadius:"8px",
+                    borderLeft:`3px solid ${c.border}`, cursor:"pointer" }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                     <span style={{ color:c.text, fontSize:"13px", fontWeight:600, flex:1, paddingRight:"8px" }}>{f.titre}</span>
                     <Badge label={f.gravite} color={c.border} />
                   </div>
-                  <p style={{ color:t.textMuted, fontSize:"11px", margin:"4px 0 0" }}>{f.type} · {f.date}</p>
+                  <p style={{ color:t.textMuted, fontSize:"11px", margin:"4px 0 0" }}>
+                    {f.type} · {f.date}{matchPv ? " · voir séance →" : ""}
+                  </p>
                 </div>
               );
             })
           }
+          {alertes.length > 6 && (
+            <p style={{ color:t.primary, fontSize:"11px", margin:"6px 0 0", cursor:"pointer" }}
+               onClick={()=>setTab("failles")}>
+              + {alertes.length - 6} autres alertes →
+            </p>
+          )}
         </Card>
 
-        <Card>
+        <Card onClick={()=>setTab("pv")}>
           <p style={{ color:t.primary, fontSize:"11px", fontWeight:700, margin:"0 0 12px 0",
             textTransform:"uppercase", letterSpacing:"0.06em" }}>≡ Dernières séances</p>
           {[...pvs].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5).map(pv=>(
@@ -2382,6 +2623,99 @@ function Dashboard({ lois, pvs, failles, setTab }) {
             </div>
           ))}
         </Card>
+      </div>
+    </div>
+  );
+}
+
+// ── AIDE ───────────────────────────────────────────────────────────────────────
+function Aide() {
+  const t = useT();
+
+  const workflow = [
+    {
+      moment: "Chaque semaine",
+      color: t.primary,
+      etapes: [
+        { action: "Lancer la synchronisation", ou: "Sync Mairie", quoi: "Cliquer sur « Synchroniser » pour importer les nouveaux comptes-rendus publiés sur le site de la mairie. L'IA analyse automatiquement chaque nouveau PV et en extrait les délibérations, votes et anomalies." },
+        { action: "Vérifier le tableau de bord", ou: "Accueil", quoi: "Consulter les nouvelles alertes remontées. Si une faille grave est détectée, elle apparaît en rouge avec le délai de recours restant (60 jours à partir de la séance)." },
+      ],
+    },
+    {
+      moment: "Avant chaque séance",
+      color: t.purple,
+      etapes: [
+        { action: "Consulter l'ordre du jour", ou: "Procès-verbaux", quoi: "Ouvrir la séance à venir (si déjà importée) et lire les délibérations prévues. L'IA signale les points à risque juridique élevé." },
+        { action: "Préparer ses questions", ou: "Questions & CADA", quoi: "Rédiger des questions écrites sur les points sensibles de l'ordre du jour. L'IA génère le courrier officiel à envoyer au maire avant la séance." },
+        { action: "Vérifier les engagements passés", ou: "Engagements", quoi: "Contrôler si des engagements pris lors de séances précédentes sont échus ou non honorés. Peut servir de point de prise de parole en séance." },
+      ],
+    },
+    {
+      moment: "Pendant la séance",
+      color: t.warning || "#f59e0b",
+      etapes: [
+        { action: "Activer la séance live", ou: "Séance live", quoi: "Ouvrir cette vue sur son téléphone ou tablette. Saisir en temps réel les délibérations présentées, les votes (pour/contre/abstention), et ses propres interventions." },
+        { action: "Noter les anomalies observées", ou: "Séance live", quoi: "Si une convocation a été envoyée hors délai, si un point est ajouté en urgence sans justification, ou si un vote est contesté : le noter immédiatement dans la saisie." },
+      ],
+    },
+    {
+      moment: "Après chaque séance",
+      color: t.danger,
+      etapes: [
+        { action: "Ouvrir le PV analysé", ou: "Procès-verbaux", quoi: "Une fois le compte-rendu publié sur le site de la mairie et synchronisé, l'ouvrir pour voir les délibérations extraites et les anomalies détectées par l'IA." },
+        { action: "Traiter les failles détectées", ou: "Failles", quoi: "Pour chaque faille ouverte : lire la description, consulter la stratégie juridique IA, puis décider d'une action (question écrite, CADA, courrier au préfet). Passer la faille en « En cours » une fois traitée." },
+        { action: "Vérifier le délai de recours", ou: "Procès-verbaux", quoi: "Le délai de recours contentieux est de 60 jours à partir de la séance. Une alerte rouge apparaît sur le tableau de bord si ce délai approche." },
+        { action: "Mettre à jour le journal", ou: "Journal terrain", quoi: "Consigner les observations faites en dehors des séances : constats sur des chantiers, retours d'administrés, incohérences constatées sur le terrain." },
+      ],
+    },
+    {
+      moment: "Action juridique",
+      color: t.danger,
+      etapes: [
+        { action: "Rédiger un courrier officiel", ou: "Courriers", quoi: "Choisir un modèle (recours gracieux, demande de document, lettre au préfet) et laisser l'IA pré-remplir avec le contexte de la faille. Relire, adapter, envoyer." },
+        { action: "Déposer une demande CADA", ou: "Questions & CADA", quoi: "Si la mairie refuse de communiquer un document (délibération, rapport, marché public) : générer une demande CADA. La CADA dispose de 30 jours pour répondre." },
+        { action: "Saisir le préfet", ou: "Courriers", quoi: "Pour les vices de procédure graves (délibération illégale, défaut de convocation) : utiliser le modèle de déféré préfectoral. Le préfet peut annuler une délibération dans les 2 mois." },
+      ],
+    },
+    {
+      moment: "Communication citoyenne",
+      color: t.success,
+      etapes: [
+        { action: "Générer un rapport citoyen", ou: "Analyses IA", quoi: "L'IA produit un résumé accessible de la situation : irrégularités constatées, engagements non tenus, taux de conformité. À diffuser aux administrés." },
+        { action: "Suivre les engagements publics", ou: "Engagements", quoi: "Mettre à jour le statut de chaque engagement (Tenu / Non tenu) pour pouvoir présenter un bilan factuel aux habitants en fin de mandat." },
+      ],
+    },
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom:"22px" }}>
+        <h2 style={{ color:t.text, fontSize:"22px", fontWeight:700, margin:"0 0 4px 0" }}>Guide du conseiller</h2>
+        <p style={{ color:t.textMuted, fontSize:"12px", margin:0 }}>
+          Quoi faire, quand, et où — {COMMUNE.nom} · Opposition municipale
+        </p>
+      </div>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:"14px" }}>
+        {workflow.map(w => (
+          <Card key={w.moment} style={{ borderLeft:`3px solid ${w.color}` }}>
+            <p style={{ color:w.color, fontSize:"11px", fontWeight:700, textTransform:"uppercase",
+              letterSpacing:"0.07em", margin:"0 0 14px 0" }}>{w.moment}</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+              {w.etapes.map((e,i) => (
+                <div key={i} style={{ display:"flex", flexDirection:"column", gap:"4px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                    <span style={{ color:t.text, fontSize:"12px", fontWeight:600 }}>{e.action}</span>
+                    <span style={{ color:w.color, fontSize:"10px", background:`${w.color}18`,
+                      padding:"2px 8px", borderRadius:"4px", fontWeight:700, whiteSpace:"nowrap",
+                      flexShrink:0 }}>{e.ou}</span>
+                  </div>
+                  <span style={{ color:t.textMuted, fontSize:"12px", lineHeight:1.55 }}>{e.quoi}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ))}
       </div>
     </div>
   );
@@ -2459,14 +2793,13 @@ function SeanceLive({ setPvs }) {
   const t = useT();
   const [seances, setSeances] = useState([]);
   const [active, setActive] = useState(null);
-  const [form, setForm] = useState({ date: new Date().toISOString().slice(0,10), presents: 15, quorum: 8 });
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0,10), presents: 19, quorum: 10 });
   const [newPoint, setNewPoint] = useState("");
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [chrono, setChrono] = useState(0);
   const [chronoRunning, setChronoRunning] = useState(false);
   const chronoRef = useRef(null);
-  const QUORUM = 8;
 
   useEffect(() => {
     api.live.list().then(data => {
@@ -2540,7 +2873,8 @@ function SeanceLive({ setPvs }) {
     setExporting(false);
   };
 
-  const quorumOk = (active?.presents || 0) >= QUORUM;
+  const quorumRequis = Number(active?.quorum) || Number(form.quorum) || 10;
+  const quorumOk = (active?.presents || 0) >= quorumRequis;
   const anomaliesCount = active?.points?.filter(p => p.anomalie).length || 0;
 
   const RESULTATS = ["adopté", "rejeté", "retiré", "reporté"];
@@ -2635,7 +2969,7 @@ function SeanceLive({ setPvs }) {
           <div>
             <p style={{ color:t.textMuted, fontSize:"10px", fontWeight:600, margin:"0 0 2px 0", textTransform:"uppercase" }}>Quorum</p>
             <span style={{ color: quorumOk ? t.success : t.danger, fontSize:"14px", fontWeight:700 }}>
-              {quorumOk ? `OK (${QUORUM} requis)` : `NON ATTEINT (${QUORUM} requis)`}
+              {quorumOk ? `OK (${quorumRequis} requis)` : `NON ATTEINT (${quorumRequis} requis)`}
             </span>
           </div>
           {!quorumOk && (
@@ -2849,7 +3183,7 @@ function QuestionsCADA() {
 
   return (
     <div>
-      <SectionTitle sub="Questions écrites au maire (L2121-26) · Accès aux documents (CADA)">
+      <SectionTitle sub="Questions écrites au maire (droit à l'information CGCT L2121-13) · Accès aux documents (CADA)">
         Questions & CADA
       </SectionTitle>
 
@@ -2860,7 +3194,7 @@ function QuestionsCADA() {
         <div>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"14px" }}>
             <p style={{ color:t.textSec, fontSize:"12px" }}>
-              Délai légal de réponse : 1 mois (CGCT L2121-26). Sans réponse = recours possible.
+              Droit à l'information des conseillers (CGCT L2121-13). Délai de réponse selon le règlement intérieur (le CGCT n'en fixe pas). Sans réponse = relance puis saisine possible.
             </p>
             <Btn onClick={()=>setShowQForm(!showQForm)} variant={showQForm?"ghost":"success"} size="sm">
               {showQForm ? "Annuler" : "+ Nouvelle question"}
@@ -3172,7 +3506,7 @@ function AgendaPrep() {
       {subTab === "current" && (
         <div>
           <p style={{ color:t.textSec, fontSize:"13px", marginBottom:"16px" }}>
-            Scrape le site mairie pour trouver l'ordre du jour publié (obligatoire 5 jours avant — CGCT L2121-10).
+            Scrape le site mairie pour trouver l'ordre du jour publié (convocation obligatoire 3 jours francs avant — CGCT L2121-11, commune de moins de 3500 hab.).
           </p>
           {!currentAgenda && (
             <Card style={{ textAlign:"center", padding:"40px" }}>
@@ -3298,7 +3632,7 @@ function TestBtn({ label, testFn }) {
       const r = await testFn();
       if (r.ok) {
         setState("ok");
-        setDetail(r.message || r.latency_ms ? `${r.latency_ms}ms` : "OK");
+        setDetail(r.message || (r.latency_ms ? `${r.latency_ms}ms` : "OK"));
       } else {
         setState("error");
         setDetail(r.error || "Échec");
@@ -3435,7 +3769,7 @@ function Configuration() {
             <Input value={form.commune_cp||""} onChange={e=>set("commune_cp",e.target.value)} placeholder="69210" />
           </ConfigField>
           <ConfigField label="Code INSEE">
-            <Input value={form.commune_insee||""} onChange={e=>set("commune_insee",e.target.value)} placeholder="69082" />
+            <Input value={form.commune_insee||""} onChange={e=>set("commune_insee",e.target.value)} placeholder="69086" />
           </ConfigField>
           <ConfigField label="Population (habitants)">
             <Input value={form.commune_population||""} onChange={e=>set("commune_population",e.target.value)} placeholder="2000" type="number" />
@@ -3569,7 +3903,7 @@ function AdminPanel() {
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    fetch("/api/admin/usage")
+    fetch("/api/admin/usage", { headers: authHeaders() })
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
       .catch(e => { setErr(e.message); setLoading(false); });
@@ -4409,95 +4743,89 @@ function JournalTerrain({ pvs, failles }) {
 function StatsElus() {
   const t = useT();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const loadStats = async () => {
-    setLoading(true); setError(null);
-    try { setData(await api.analyses.elus()); }
-    catch (e) { setError(e.message); }
-    setLoading(false);
-  };
+  useEffect(() => {
+    api.analyses.elus().then(setData).catch(e => setError(e.message));
+  }, []);
 
-  const IMPACT_COLOR = { Haute: t.danger, Moyenne: t.warning, Basse: t.success };
+  if (error) return (
+    <div>
+      <SectionTitle sub="Données agrégées des PV et séances live">Statistiques du conseil</SectionTitle>
+      <div style={{ background: t.dangerBg, border: `1px solid ${t.danger}44`, borderRadius: "8px",
+        padding: "16px", color: t.danger, fontSize: "13px" }}>Erreur : {error}</div>
+    </div>
+  );
+  if (!data) return <Spinner label="Chargement des statistiques…" />;
+
+  const fmt = n => (n ?? 0).toLocaleString("fr-FR");
+  const tv = data.total_votes || {};
+  const annee = d => (d || "").slice(0, 4);
+  const cards = [
+    { label: "Séances analysées", value: fmt(data.total_seances) },
+    { label: "Période", value: data.periode?.debut ? `${annee(data.periode.debut)}–${annee(data.periode.fin)}` : "—" },
+    { label: "Votes pour (cumul)", value: fmt(tv.pour), color: t.success },
+    { label: "Votes contre (cumul)", value: fmt(tv.contre), color: t.danger },
+    { label: "Abstentions (cumul)", value: fmt(tv.abstention), color: t.warning },
+    { label: "Taux d'unanimité", value: data.unanimite_pct != null ? `${data.unanimite_pct}%` : "—", color: t.primary, hint: `${fmt(data.contestees)} séance(s) avec opposition` },
+    { label: "Anomalies relevées", value: fmt(data.anomalies_total), color: t.danger },
+    { label: "Failles suivies", value: fmt(data.failles_total) },
+    ...(data.presence_cr ? [{ label: "Présence moy. (CR)", value: `${data.presence_cr.taux_present_moyen}%`, color: t.success, hint: `${data.presence_cr.seances_analysees} séance(s) · source CR` }] : []),
+    ...(data.presence?.pct != null ? [{ label: "Présence moy. (séances live)", value: `${data.presence.pct}%`, hint: `${data.presence.moyenne}/${data.conseil?.nb_conseillers || "?"} · ${data.presence.seances_live} séance(s)` }] : []),
+  ];
 
   return (
     <div>
-      <SectionTitle sub="Présences, votes et thèmes d'intervention par élu (2020-2026)">
-        Statistiques élus
+      <SectionTitle sub="Présences extraites des CR · votes agrégés des PV">
+        Statistiques du conseil
       </SectionTitle>
 
-      {!data && !loading && (
-        <Card style={{ textAlign: "center", padding: "48px" }}>
-          <p style={{ color: t.textMuted, fontSize: "13px", marginBottom: "16px" }}>
-            Analyse IA des comportements et présences sur l'ensemble des séances
+      <Card style={{ marginBottom: "16px", borderLeft: `3px solid ${t.warning}` }}>
+        <p style={{ color: t.textSec, fontSize: "12px", lineHeight: 1.6, margin: 0 }}>{data.note}</p>
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: "10px", marginBottom: "16px" }}>
+        {cards.map(c => (
+          <Card key={c.label} hover={false} style={{ textAlign: "center", padding: "16px" }}>
+            <div style={{ fontSize: "20px", fontWeight: 700, color: c.color || t.text, fontVariantNumeric: "tabular-nums" }}>{c.value}</div>
+            <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "4px" }}>{c.label}</div>
+            {c.hint && <div style={{ fontSize: "9px", color: t.textMuted, marginTop: "2px" }}>{c.hint}</div>}
+          </Card>
+        ))}
+      </div>
+
+      {data.elus?.length > 0 && (
+        <Card style={{ marginBottom: "16px" }}>
+          <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 4px 0" }}>
+            Présence par élu
           </p>
-          <Btn onClick={loadStats} variant="primary" size="lg">Analyser les élus (IA)</Btn>
+          <p style={{ color: t.textMuted, fontSize: "11px", margin: "0 0 14px 0" }}>
+            Source : liste nominative des comptes-rendus · {data.presence_cr?.seances_analysees || 0} séance(s)
+          </p>
+          {data.elus.map(e => (
+            <div key={e.nom} style={{ marginBottom: "9px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
+                <span style={{ fontSize: "12px", color: t.text }}>{e.nom}</span>
+                <span style={{ fontSize: "11px", color: t.textMuted }}>{e.presence_pct}% · {e.present}/{e.total}</span>
+              </div>
+              <div style={{ height: "6px", background: t.border, borderRadius: "3px", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${e.presence_pct}%`, borderRadius: "3px",
+                  background: e.presence_pct >= 80 ? t.success : e.presence_pct >= 50 ? t.warning : t.danger }} />
+              </div>
+            </div>
+          ))}
         </Card>
       )}
 
-      {loading && <Spinner label="Claude analyse les données élus…" />}
-
-      {error && (
-        <div style={{ background: t.dangerBg, border: `1px solid ${t.danger}44`,
-          borderRadius: "8px", padding: "16px", color: t.danger, fontSize: "13px" }}>
-          Erreur : {error}
-        </div>
-      )}
-
-      {data && !error && (
-        <div>
-          {data.analyse_globale && (
-            <Card style={{ marginBottom: "16px", borderLeft: `3px solid ${t.primary}` }}>
-              <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, margin: "0 0 8px 0",
-                textTransform: "uppercase" }}>Analyse globale · {data.periode}</p>
-              <p style={{ color: t.textSec, fontSize: "13px", lineHeight: "1.7", margin: 0 }}>
-                {data.analyse_globale}
-              </p>
-            </Card>
-          )}
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {(data.elus || []).map((elu, i) => (
-              <Card key={i} hover={false}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
-                  <div>
-                    <h3 style={{ color: t.text, fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0" }}>{elu.nom}</h3>
-                    {elu.role && <span style={{ color: t.textMuted, fontSize: "11px" }}>{elu.role}</span>}
-                  </div>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ color: elu.presence_pct > 80 ? t.success : elu.presence_pct > 60 ? t.warning : t.danger,
-                        fontSize: "18px", fontWeight: 700 }}>{elu.presence_pct}%</div>
-                      <div style={{ color: t.textMuted, fontSize: "10px" }}>présence</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: "12px", marginBottom: "8px",
-                  padding: "8px 12px", background: t.surfaceAlt, borderRadius: "6px", flexWrap: "wrap" }}>
-                  <span style={{ color: t.success, fontSize: "12px" }}>✓ {elu.votes_pour} pour</span>
-                  <span style={{ color: t.danger, fontSize: "12px" }}>✗ {elu.votes_contre} contre</span>
-                  {elu.themes?.length > 0 && (
-                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                      {elu.themes.map(th => <Badge key={th} label={th} color={t.primary} />)}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ height: "6px", background: t.border, borderRadius: "3px", overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${elu.presence_pct}%`,
-                    background: elu.presence_pct > 80 ? t.success : elu.presence_pct > 60 ? t.warning : t.danger,
-                    borderRadius: "3px", transition: "width 0.4s" }} />
-                </div>
-              </Card>
-            ))}
+      {data.conseil && (
+        <Card>
+          <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 10px 0" }}>Composition du conseil</p>
+          <div style={{ display: "flex", gap: "24px", flexWrap: "wrap", fontSize: "13px", color: t.textSec }}>
+            <span>Maire : <b style={{ color: t.text }}>{data.conseil.maire || "—"}</b></span>
+            <span>Conseillers : <b style={{ color: t.text }}>{data.conseil.nb_conseillers || "—"}</b></span>
+            <span>Quorum : <b style={{ color: t.text }}>{data.conseil.quorum || "—"}</b></span>
           </div>
-
-          <div style={{ marginTop: "14px", textAlign: "right" }}>
-            <Btn onClick={loadStats} variant="ghost" size="sm">Rafraîchir</Btn>
-          </div>
-        </div>
+        </Card>
       )}
     </div>
   );
@@ -4668,7 +4996,11 @@ const IGN_LAYERS = {
     label: "Zones PLU",
     make: async (L, map) => {
       const resp = await fetch("https://apicarto.ign.fr/api/gpu/zone-urba?partition=DU_69086");
+      if (!resp.ok) throw new Error(`apicarto a répondu ${resp.status}`);
       const data = await resp.json();
+      if (!data || !Array.isArray(data.features) || data.features.length === 0) {
+        throw new Error("Aucune zone PLU disponible pour cette commune sur le GPU.");
+      }
       const pluColors = { U: "#FBBF24", AU: "#F97316", AUc: "#F97316", AUs: "#FDE68A", A: "#86EFAC", N: "#4ADE80" };
       return L.geoJSON(data, {
         style: (f) => {
@@ -4706,13 +5038,6 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused, onGoToPv }) {
 
   useEffect(() => {
     import("leaflet").then(L => {
-      if (!window._leafletCSSLoaded) {
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-        document.head.appendChild(link);
-        window._leafletCSSLoaded = true;
-      }
       window.L = L.default || L;
       setLeafletReady(true);
     }).catch(() => {});
@@ -4782,9 +5107,14 @@ function CarteUrbanisme({ pvs, focusDelib, onFocused, onGoToPv }) {
       }
       setActiveLayers(prev => ({ ...prev, [key]: false }));
     } else {
-      const result = IGN_LAYERS[key].make(L, map);
-      layerRefs.current[key] = result instanceof Promise ? await result : result;
-      setActiveLayers(prev => ({ ...prev, [key]: true }));
+      try {
+        const result = IGN_LAYERS[key].make(L, map);
+        layerRefs.current[key] = result instanceof Promise ? await result : result;
+        setActiveLayers(prev => ({ ...prev, [key]: true }));
+      } catch (err) {
+        alert(`Impossible de charger la couche « ${IGN_LAYERS[key].label} » : ${err.message}`);
+        setActiveLayers(prev => ({ ...prev, [key]: false }));
+      }
     }
   };
 
@@ -4982,7 +5312,7 @@ const NAV_GROUPS = [
     label: "Analyses",
     items: [
       { id:"analyses",     label:"Analyses IA",     icon:"◈" },
-      { id:"stats-elus",   label:"Stats élus",      icon:"∑" },
+      { id:"stats-elus",   label:"Stats conseil",   icon:"∑" },
       { id:"agenda",       label:"Agenda",          icon:"+" },
       { id:"carte",        label:"Carte urbanisme", icon:"⊕" },
     ],
@@ -4993,6 +5323,7 @@ const NAV_GROUPS = [
       { id:"scraper",      label:"Sync Mairie",     icon:"↻" },
       { id:"config",       label:"Configuration",   icon:"⚙" },
       { id:"couts",        label:"Coûts & Services",icon:"$" },
+      { id:"aide",         label:"Aide",            icon:"?" },
     ],
   },
 ];
@@ -5009,8 +5340,8 @@ const FEATURES_CATALOG = [
   { label:"Analyse tendances",          gratuit:false, cout:"~$0.04", detail:"Claude — tout l'historique" },
   { label:"Rapport citoyen",            gratuit:false, cout:"~$0.08", detail:"Claude — rapport long format" },
   { label:"Prédiction agenda",          gratuit:false, cout:"~$0.05", detail:"Claude — historique séances" },
-  { label:"Stats élus",                 gratuit:false, cout:"~$0.10", detail:"Claude — analyse tous PVs" },
-  { label:"Benchmark financier",        gratuit:false, cout:"~$0.06", detail:"Claude + données INSEE" },
+  { label:"Stats conseil",              gratuit:true,  cout:"gratuit", detail:"Agrégation locale des PV (sans IA)" },
+  { label:"Benchmark financier",        gratuit:false, cout:"~$0.06", detail:"OFGL gratuit · commentaire IA optionnel" },
   { label:"Génération question écrite", gratuit:false, cout:"~$0.02", detail:"Claude" },
   { label:"Génération courrier",        gratuit:false, cout:"~$0.02", detail:"Claude" },
   { label:"Génération CADA",            gratuit:false, cout:"~$0.01", detail:"Claude" },
@@ -5022,7 +5353,7 @@ function CoutsServices() {
   const [loading, setLoading] = useState(true);
 
   useEffect(()=>{
-    fetch("/api/admin/usage")
+    fetch("/api/admin/usage", { headers: authHeaders() })
       .then(r=>r.json())
       .then(d=>{ setData(d); setLoading(false); })
       .catch(()=>setLoading(false));
@@ -5141,8 +5472,11 @@ function useWindowWidth() {
 }
 
 // ── APP ────────────────────────────────────────────────────────────────────────
-export default function App() {
-  const [tab, setTab] = useState("dashboard");
+function MainApp() {
+  const [tab, setTab] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("tab") || "dashboard"; }
+    catch { return "dashboard"; }
+  });
   const [focusDelib, setFocusDelib] = useState(null);
   const [openPvId, setOpenPvId] = useState(null);
   const [lois, setLois] = useState([]);
@@ -5212,7 +5546,7 @@ export default function App() {
       </div>
     );
     switch(tab) {
-      case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} />;
+      case "dashboard":     return <Dashboard lois={lois} pvs={pvs} failles={failles} setTab={setTab} setOpenPvId={setOpenPvId} />;
       case "seance-live":   return <SeanceLive setPvs={setPvs} />;
       case "pv":            return <ProcessVerbaux pvs={pvs} setPvs={setPvs} openPvId={openPvId} onOpenPvDone={() => setOpenPvId(null)} onGoToCarte={(d) => { setFocusDelib(d); setTab("carte"); }} />;
       case "questions":     return <QuestionsCADA />;
@@ -5224,8 +5558,8 @@ export default function App() {
       case "scraper":       return <SyncMairie onImport={imp=>setPvs(prev=>[...prev,...imp])} />;
       case "historique":    return <Historique pvs={pvs} failles={failles} />;
       case "config":        return <Configuration />;
-      case "admin":         return <AdminPanel />;
       case "couts":         return <CoutsServices />;
+      case "aide":          return <Aide />;
       case "modeles":       return <Modeles />;
       case "courriers":     return <Courriers />;
       case "engagements":   return <Engagements pvs={pvs} />;
@@ -5263,7 +5597,7 @@ export default function App() {
 
   // Logo + titre
   const logo = (
-    <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
+    <div onClick={() => setTab("dashboard")} style={{ display:"flex", alignItems:"center", gap:"10px", cursor:"pointer" }}>
       <div style={{ width:"30px", height:"30px", background:theme.primaryBg,
         border:`1.5px solid ${theme.primary}`, borderRadius:"7px",
         display:"flex", alignItems:"center", justifyContent:"center",
@@ -5506,4 +5840,73 @@ export default function App() {
       </div>
     </ThemeCtx.Provider>
   );
+}
+
+// ── PORTE D'AUTHENTIFICATION ─────────────────────────────────────────────────────
+// Vérifie le token avant d'afficher l'application. Si le serveur n'exige pas de token
+// (dev), l'accès passe directement. Si le serveur est injoignable, on laisse l'app
+// gérer son propre message d'erreur.
+function AuthGate({ children }) {
+  const [status, setStatus] = useState("checking"); // checking | authed | locked
+  const [pwd, setPwd] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const probe = useCallback(async () => {
+    try {
+      const res = await fetch("/api/config", { headers: authHeaders() });
+      if (res.status === 401) { setStatus("locked"); return; }
+      setStatus("authed"); // 200 ou autre erreur : l'app prend le relais
+    } catch {
+      setStatus("authed"); // serveur injoignable : l'app affichera son erreur
+    }
+  }, []);
+
+  useEffect(() => { probe(); }, [probe]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr("");
+    setToken(pwd.trim());
+    const res = await fetch("/api/config", { headers: authHeaders() }).catch(() => null);
+    if (res && res.ok) { setStatus("authed"); }
+    else { setToken(""); setErr("Token invalide."); }
+    setBusy(false);
+  };
+
+  if (status === "checking") return null;
+  if (status === "locked") {
+    return (
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background:DARK.bg, fontFamily:"system-ui, sans-serif", padding:"20px" }}>
+        <form onSubmit={submit} style={{ background:DARK.surface, border:`1px solid ${DARK.border}`,
+          borderRadius:"14px", padding:"28px", width:"100%", maxWidth:"360px",
+          boxShadow:"0 20px 60px rgba(0,0,0,0.4)" }}>
+          <h1 style={{ color:DARK.text, fontSize:"18px", fontWeight:700, margin:"0 0 6px 0" }}>Accès protégé</h1>
+          <p style={{ color:DARK.textMuted, fontSize:"12px", margin:"0 0 18px 0" }}>
+            Outil opposition Fleurieux — saisissez le token d'accès.
+          </p>
+          <input
+            type="password" value={pwd} onChange={e=>setPwd(e.target.value)}
+            autoFocus placeholder="Token d'accès"
+            style={{ width:"100%", boxSizing:"border-box", background:DARK.inputBg,
+              border:`1px solid ${DARK.border}`, borderRadius:"8px", padding:"10px 12px",
+              color:DARK.text, fontSize:"14px", fontFamily:"inherit", marginBottom:"12px" }}
+          />
+          {err && <p style={{ color:DARK.danger, fontSize:"12px", margin:"0 0 12px 0" }}>{err}</p>}
+          <button type="submit" disabled={busy || !pwd.trim()} style={{ width:"100%",
+            background:DARK.primary, color:"#fff", border:"none", borderRadius:"8px",
+            padding:"10px", fontSize:"14px", fontWeight:600, cursor:"pointer",
+            fontFamily:"inherit", opacity: busy || !pwd.trim() ? 0.6 : 1 }}>
+            {busy ? "Vérification…" : "Entrer"}
+          </button>
+        </form>
+      </div>
+    );
+  }
+  return children;
+}
+
+export default function App() {
+  return <AuthGate><MainApp /></AuthGate>;
 }
