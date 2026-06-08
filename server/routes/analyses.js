@@ -446,6 +446,9 @@ router.get("/convocations", (req, res) => {
       const convocISO = parseFrenchDate(att.convocation);
       const check = delaiConvocation(convocISO, p.date, seuil);
       if (!check) continue;
+      // Garde-fou : une date de convocation aberrante (coquille/OCR du PV) ne doit pas
+      // produire une fausse "non-conformité". On l'isole comme "à vérifier".
+      const douteux = check.jours_francs < 0 || check.jours_francs > 31;
       seances.push({
         pv_id: p.id,
         date_seance: p.date,
@@ -453,17 +456,20 @@ router.get("/convocations", (req, res) => {
         convocation: convocISO,
         convocation_texte: att.convocation,
         jours_francs: check.jours_francs,
-        conforme: check.conforme,
+        conforme: douteux ? null : check.conforme,
+        douteux,
       });
     }
 
-    const non_conformes = seances.filter(s => !s.conforme);
+    const evaluables   = seances.filter(s => !s.douteux);
+    const non_conformes = evaluables.filter(s => !s.conforme);
     res.json({
       seuil, article,
       methode: "Jours francs : jour d'envoi de la convocation et jour de séance exclus.",
-      total_controlees: seances.length,
-      conformes: seances.length - non_conformes.length,
+      total_controlees: evaluables.length,
+      conformes: evaluables.length - non_conformes.length,
       non_conformes: non_conformes.length,
+      douteux: seances.length - evaluables.length,
       seances,
     });
   } catch (err) {

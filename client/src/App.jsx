@@ -1718,6 +1718,7 @@ function Analyses({ lois, pvs, failles }) {
                       { label:"Séances contrôlées", value:convoc.total_controlees },
                       { label:"Conformes", value:convoc.conformes, color:t.success },
                       { label:"Non conformes", value:convoc.non_conformes, color:convoc.non_conformes>0?t.danger:t.textMuted },
+                      ...(convoc.douteux>0 ? [{ label:"À vérifier (date PV)", value:convoc.douteux, color:t.warning }] : []),
                     ].map(c=>(
                       <Card key={c.label} hover={false} style={{ textAlign:"center", padding:"14px" }}>
                         <div style={{ fontSize:"20px", fontWeight:700, color:c.color||t.text }}>{c.value}</div>
@@ -1726,19 +1727,23 @@ function Analyses({ lois, pvs, failles }) {
                     ))}
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
-                    {convoc.seances.map(s=>(
-                      <Card key={s.pv_id} hover={false} style={{ borderLeft:`3px solid ${s.conforme?t.success:t.danger}` }}>
+                    {convoc.seances.map(s=>{
+                      const couleur = s.douteux ? t.warning : s.conforme ? t.success : t.danger;
+                      const statut  = s.douteux ? "Date à vérifier" : s.conforme ? "Conforme" : `Non conforme (< ${convoc.seuil}j)`;
+                      return (
+                      <Card key={s.pv_id} hover={false} style={{ borderLeft:`3px solid ${couleur}` }}>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"10px", flexWrap:"wrap" }}>
                           <div style={{ minWidth:0 }}>
                             <div style={{ fontSize:"13px", fontWeight:600, color:t.text }}>Séance du {s.date_seance}</div>
                             <div style={{ fontSize:"11px", color:t.textMuted }}>
-                              Convocation : {s.convocation} · {s.jours_francs} jour(s) franc(s)
+                              Convocation : {s.convocation}{s.douteux ? " (lecture douteuse)" : ` · ${s.jours_francs} jour(s) franc(s)`}
                             </div>
                           </div>
-                          <Badge label={s.conforme ? "Conforme" : `Non conforme (< ${convoc.seuil}j)`} color={s.conforme?t.success:t.danger} />
+                          <Badge label={statut} color={couleur} />
                         </div>
                       </Card>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               )}
