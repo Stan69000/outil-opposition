@@ -4804,19 +4804,26 @@ function FillMissingButton({ onDone, label = "Compléter les textes manquants" }
   );
 }
 
-function StatsElus() {
+function StatsElus({ setTab }) {
   const t = useT();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [from, setFrom] = useState(null);
+  const [to, setTo] = useState(null);
+  const [sortKey, setSortKey] = useState("presence_pct"); // presence_pct | nom | present
+  const [sortDir, setSortDir] = useState("desc");
+  const [seanceDir, setSeanceDir] = useState("desc");
+  const elusRef = useRef(null);
+  const seancesRef = useRef(null);
 
   const load = useCallback(() => {
-    api.analyses.elus().then(d => { setData(d); setError(null); }).catch(e => setError(e.message));
-  }, []);
+    api.analyses.elus(from, to).then(d => { setData(d); setError(null); }).catch(e => setError(e.message));
+  }, [from, to]);
   useEffect(() => { load(); }, [load]);
 
   if (error) return (
     <div>
-      <SectionTitle sub="Données agrégées des PV et séances live">Statistiques du conseil</SectionTitle>
+      <SectionTitle sub="Données agrégées des PV et séances">Statistiques du conseil</SectionTitle>
       <div style={{ background: t.dangerBg, border: `1px solid ${t.danger}44`, borderRadius: "8px",
         padding: "16px", color: t.danger, fontSize: "13px" }}>Erreur : {error}</div>
     </div>
@@ -4826,18 +4833,37 @@ function StatsElus() {
   const fmt = n => (n ?? 0).toLocaleString("fr-FR");
   const tv = data.total_votes || {};
   const annee = d => (d || "").slice(0, 4);
+  const years = data.annees_dispo || [];
+  const goElus = () => elusRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goSeances = () => seancesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // to = onglet cible (drill-down) · act = action locale (scroll)
   const cards = [
-    { label: "Séances analysées", value: fmt(data.total_seances) },
+    { label: "Séances analysées", value: fmt(data.total_seances), act: goSeances },
     { label: "Période", value: data.periode?.debut ? `${annee(data.periode.debut)}–${annee(data.periode.fin)}` : "—" },
-    { label: "Votes pour (cumul)", value: fmt(tv.pour), color: t.success },
-    { label: "Votes contre (cumul)", value: fmt(tv.contre), color: t.danger },
-    { label: "Abstentions (cumul)", value: fmt(tv.abstention), color: t.warning },
-    { label: "Taux d'unanimité", value: data.unanimite_pct != null ? `${data.unanimite_pct}%` : "—", color: t.primary, hint: `${fmt(data.contestees)} séance(s) avec opposition` },
-    { label: "Anomalies relevées", value: fmt(data.anomalies_total), color: t.danger },
-    { label: "Failles suivies", value: fmt(data.failles_total) },
-    ...(data.presence_cr ? [{ label: "Présence moy. (CR)", value: `${data.presence_cr.taux_present_moyen}%`, color: t.success, hint: `${data.presence_cr.seances_analysees} séance(s) · source CR` }] : []),
-    ...(data.presence?.pct != null ? [{ label: "Présence moy. (séances live)", value: `${data.presence.pct}%`, hint: `${data.presence.moyenne}/${data.conseil?.nb_conseillers || "?"} · ${data.presence.seances_live} séance(s)` }] : []),
+    { label: "Votes pour (cumul)", value: fmt(tv.pour), color: t.success, to: "historique" },
+    { label: "Votes contre (cumul)", value: fmt(tv.contre), color: t.danger, to: "historique" },
+    { label: "Abstentions (cumul)", value: fmt(tv.abstention), color: t.warning, to: "historique" },
+    { label: "Taux d'unanimité", value: data.unanimite_pct != null ? `${data.unanimite_pct}%` : "—", color: t.primary, hint: `${fmt(data.contestees)} séance(s) avec opposition`, act: goSeances },
+    { label: "Anomalies relevées", value: fmt(data.anomalies_total), color: t.danger, to: "pv" },
+    { label: "Failles suivies", value: fmt(data.failles_total), to: "failles" },
+    ...(data.presence_cr ? [{ label: "Présence moy. (CR)", value: `${data.presence_cr.taux_present_moyen}%`, color: t.success, hint: `${data.presence_cr.seances_analysees} séance(s) · source CR`, act: goElus }] : []),
+    ...(data.presence?.pct != null ? [{ label: "Présence moy. (séances live)", value: `${data.presence.pct}%`, hint: `${data.presence.moyenne}/${data.conseil?.nb_conseillers || "?"} · ${data.presence.seances_live} séance(s)`, to: "seance-live" }] : []),
   ];
+
+  const clickCard = (c) => { if (c.to) { setTab && setTab(c.to); } else if (c.act) c.act(); };
+
+  const selStyle = { background: t.inputBg, color: t.text, border: `1px solid ${t.border}`,
+    borderRadius: "6px", padding: "5px 8px", fontSize: "12px", fontFamily: "inherit" };
+
+  const elusSorted = [...(data.elus || [])].sort((a, b) => {
+    const cmp = sortKey === "nom" ? a.nom.localeCompare(b.nom) : (a[sortKey] || 0) - (b[sortKey] || 0);
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+  const seancesSorted = [...(data.seances || [])].sort((a, b) => {
+    const cmp = (a.date || "").localeCompare(b.date || "");
+    return seanceDir === "asc" ? cmp : -cmp;
+  });
 
   return (
     <div>
@@ -4845,30 +4871,67 @@ function StatsElus() {
         Statistiques du conseil
       </SectionTitle>
 
+      {/* FILTRE PÉRIODE */}
+      <Card hover={false} style={{ marginBottom: "12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "12px", color: t.textMuted, fontWeight: 600 }}>Période</span>
+        <label style={{ fontSize: "12px", color: t.textSec }}>De{" "}
+          <select style={selStyle} value={from || ""} onChange={e => setFrom(e.target.value ? +e.target.value : null)}>
+            <option value="">début</option>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: "12px", color: t.textSec }}>à{" "}
+          <select style={selStyle} value={to || ""} onChange={e => setTo(e.target.value ? +e.target.value : null)}>
+            <option value="">fin</option>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </label>
+        {(from || to) && <Btn variant="ghost" size="sm" onClick={() => { setFrom(null); setTo(null); }}>Réinitialiser</Btn>}
+        <span style={{ fontSize: "11px", color: t.textMuted, marginLeft: "auto" }}>{data.total_seances} séance(s) sur la période</span>
+      </Card>
+
       <Card style={{ marginBottom: "16px", borderLeft: `3px solid ${t.warning}` }}>
         <p style={{ color: t.textSec, fontSize: "12px", lineHeight: 1.6, margin: "0 0 10px 0" }}>{data.note}</p>
         <FillMissingButton onDone={load} label="Compléter les textes manquants (présences)" />
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: "10px", marginBottom: "16px" }}>
-        {cards.map(c => (
-          <Card key={c.label} hover={false} style={{ textAlign: "center", padding: "16px" }}>
-            <div style={{ fontSize: "20px", fontWeight: 700, color: c.color || t.text, fontVariantNumeric: "tabular-nums" }}>{c.value}</div>
-            <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "4px" }}>{c.label}</div>
-            {c.hint && <div style={{ fontSize: "9px", color: t.textMuted, marginTop: "2px" }}>{c.hint}</div>}
-          </Card>
-        ))}
+        {cards.map(c => {
+          const clickable = !!(c.to || c.act);
+          return (
+            <Card key={c.label} hover={clickable}
+              onClick={clickable ? () => clickCard(c) : undefined}
+              style={{ textAlign: "center", padding: "16px" }}>
+              <div style={{ fontSize: "20px", fontWeight: 700, color: c.color || t.text, fontVariantNumeric: "tabular-nums" }}>{c.value}</div>
+              <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "4px" }}>{c.label}{clickable && <span style={{ color: t.primary }}> ›</span>}</div>
+              {c.hint && <div style={{ fontSize: "9px", color: t.textMuted, marginTop: "2px" }}>{c.hint}</div>}
+            </Card>
+          );
+        })}
       </div>
 
       {data.elus?.length > 0 && (
-        <Card style={{ marginBottom: "16px" }}>
-          <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 4px 0" }}>
-            Présence par élu
-          </p>
+        <Card ref={elusRef} style={{ marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "4px" }}>
+            <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
+              Présence par élu
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <select style={selStyle} value={sortKey} onChange={e => setSortKey(e.target.value)}>
+                <option value="presence_pct">Présence %</option>
+                <option value="nom">Nom</option>
+                <option value="present">Nb présences</option>
+                <option value="total">Nb séances</option>
+              </select>
+              <Btn variant="ghost" size="sm" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}>
+                {sortDir === "asc" ? "↑ croissant" : "↓ décroissant"}
+              </Btn>
+            </div>
+          </div>
           <p style={{ color: t.textMuted, fontSize: "11px", margin: "0 0 14px 0" }}>
             Source : liste nominative des comptes-rendus · {data.presence_cr?.seances_analysees || 0} séance(s)
           </p>
-          {data.elus.map(e => (
+          {elusSorted.map(e => (
             <div key={e.nom} style={{ marginBottom: "9px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
                 <span style={{ fontSize: "12px", color: t.text }}>{e.nom}</span>
@@ -4880,6 +4943,40 @@ function StatsElus() {
               </div>
             </div>
           ))}
+        </Card>
+      )}
+
+      {data.seances?.length > 0 && (
+        <Card ref={seancesRef} style={{ marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <p style={{ color: t.textMuted, fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", margin: 0 }}>
+              Séances ({data.seances.length})
+            </p>
+            <Btn variant="ghost" size="sm" onClick={() => setSeanceDir(d => d === "asc" ? "desc" : "asc")}>
+              Date {seanceDir === "asc" ? "↑ croissant" : "↓ décroissant"}
+            </Btn>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+              <thead><tr style={{ color: t.textMuted, textAlign: "left" }}>
+                {["Date", "Présents", "Pour", "Contre", "Abst.", "Anomalies"].map(h => (
+                  <th key={h} style={{ padding: "4px 8px", borderBottom: `1px solid ${t.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {seancesSorted.map(s => (
+                  <tr key={s.pv_id} style={{ borderBottom: `1px solid ${t.borderMid}` }}>
+                    <td style={{ padding: "5px 8px", color: t.text, whiteSpace: "nowrap" }}>{s.date}</td>
+                    <td style={{ padding: "5px 8px", color: t.textSec }}>{s.presents != null ? `${s.presents}${s.en_exercice ? `/${s.en_exercice}` : ""}` : "—"}</td>
+                    <td style={{ padding: "5px 8px", color: t.success }}>{s.votes.pour}</td>
+                    <td style={{ padding: "5px 8px", color: t.danger }}>{s.votes.contre}</td>
+                    <td style={{ padding: "5px 8px", color: t.warning }}>{s.votes.abstention}</td>
+                    <td style={{ padding: "5px 8px", color: s.anomalies > 0 ? t.danger : t.textMuted, fontWeight: s.anomalies > 0 ? 600 : 400 }}>{s.anomalies}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
 
@@ -5631,7 +5728,7 @@ function MainApp() {
       case "engagements":   return <Engagements pvs={pvs} />;
       case "journal":       return <JournalTerrain pvs={pvs} failles={failles} />;
       case "veille":        return <VeilleReglementaire />;
-      case "stats-elus":    return <StatsElus />;
+      case "stats-elus":    return <StatsElus setTab={setTab} />;
       case "carte":         return <CarteUrbanisme pvs={pvs} focusDelib={focusDelib} onFocused={() => setFocusDelib(null)} onGoToPv={(pvId) => { setOpenPvId(pvId); setTab("pv"); }} />;
       default: return null;
     }

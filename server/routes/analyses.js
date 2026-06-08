@@ -333,25 +333,61 @@ router.get("/sync-log", (req, res) => {
 // nominatifs : impossible de produire des stats fiables PAR élu. On agrège au niveau du conseil.
 router.get("/elus", (req, res) => {
   try {
-    const pvs  = db.prepare("SELECT id, date, votes_pour, votes_contre, votes_abstention, anomalies, pdf_text FROM pvs ORDER BY date").all();
+    const from = req.query.from ? parseInt(req.query.from, 10) : null;
+    const to   = req.query.to   ? parseInt(req.query.to, 10)   : null;
+    const yearOf = (d) => (d ? Number(String(d).slice(0, 4)) : null);
+    const inRange = (d) => {
+      const y = yearOf(d);
+      if (y == null) return false;
+      if (from && y < from) return false;
+      if (to && y > to) return false;
+      return true;
+    };
+
+    const allPvs = db.prepare("SELECT id, date, objet, votes_pour, votes_contre, votes_abstention, anomalies, pdf_text FROM pvs ORDER BY date").all();
+    const annees_dispo = [...new Set(allPvs.map(p => yearOf(p.date)).filter(Boolean))].sort((a, b) => a - b);
+    const pvs = (from || to) ? allPvs.filter(p => inRange(p.date)) : allPvs;
+
     const live = db.prepare("SELECT presents FROM seances_live WHERE statut = 'terminée'").all();
     const failles = db.prepare("SELECT COUNT(*) AS n FROM failles").get().n;
+
+    const delibText = {};
+    for (const d of db.prepare("SELECT seance_id, pdf_text FROM deliberations WHERE pdf_text != ''").all()) {
+      if (!delibText[d.seance_id]) delibText[d.seance_id] = d.pdf_text;
+    }
 
     const dates = pvs.map(p => p.date).filter(Boolean).sort();
     const total_votes = { pour: 0, contre: 0, abstention: 0 };
     let seances_votees = 0, unanimes = 0, contestees = 0, anomalies_total = 0;
+    const elusMap = {}; // "Prénom NOM" -> { present, absent }
+    let crSeances = 0, sommeTaux = 0, derniereCR = null;
+    const seances = [];
 
     for (const p of pvs) {
-      total_votes.pour       += p.votes_pour || 0;
-      total_votes.contre     += p.votes_contre || 0;
-      total_votes.abstention += p.votes_abstention || 0;
-      const nbVotes = (p.votes_pour || 0) + (p.votes_contre || 0) + (p.votes_abstention || 0);
-      if (nbVotes > 0) {
-        seances_votees++;
-        if ((p.votes_contre || 0) > 0 || (p.votes_abstention || 0) > 0) contestees++;
-        else unanimes++;
+      const vp = p.votes_pour || 0, vc = p.votes_contre || 0, va = p.votes_abstention || 0;
+      total_votes.pour += vp; total_votes.contre += vc; total_votes.abstention += va;
+      if (vp + vc + va > 0) { seances_votees++; (vc > 0 || va > 0) ? contestees++ : unanimes++; }
+      let anoms = 0; try { anoms = JSON.parse(p.anomalies || "[]").length; } catch (_) {}
+      anomalies_total += anoms;
+
+      const text = p.pdf_text || delibText[p.id];
+      const att = text ? parseAttendance(text) : null;
+      const hasAtt = att && (att.presents_noms.length || att.presents != null);
+      if (hasAtt) {
+        crSeances++;
+        if (att.en_exercice && att.presents != null) sommeTaux += att.presents / att.en_exercice;
+        derniereCR = { date: p.date, presents: att.presents, en_exercice: att.en_exercice, pouvoirs: att.pouvoirs, votants: att.votants };
+        for (const n of att.presents_noms) (elusMap[n] = elusMap[n] || { present: 0, absent: 0 }).present++;
+        for (const n of att.absents_noms)  (elusMap[n] = elusMap[n] || { present: 0, absent: 0 }).absent++;
       }
-      try { anomalies_total += JSON.parse(p.anomalies || "[]").length; } catch (_) {}
+
+      seances.push({
+        pv_id: p.id, date: p.date, objet: p.objet,
+        presents: hasAtt ? att.presents : null,
+        en_exercice: hasAtt ? att.en_exercice : null,
+        votes: { pour: vp, contre: vc, abstention: va },
+        anomalies: anoms,
+      });
     }
 
     const nbConseillers   = parseInt(getConfig("commune_nb_conseillers"), 10) || null;
@@ -361,27 +397,6 @@ router.get("/elus", (req, res) => {
     const presencePct = (presenceMoyenne != null && nbConseillers)
       ? Math.round((presenceMoyenne / nbConseillers) * 100)
       : null;
-
-    // ── PRÉSENCES depuis la liste nominative du CR (texte des PV) ──────────────────
-    // Un texte de délibération par séance suffit (l'en-tête présence y est répété).
-    const delibText = {};
-    for (const d of db.prepare("SELECT seance_id, pdf_text FROM deliberations WHERE pdf_text != ''").all()) {
-      if (!delibText[d.seance_id]) delibText[d.seance_id] = d.pdf_text;
-    }
-
-    const elusMap = {}; // "Prénom NOM" -> { present, absent }
-    let crSeances = 0, sommeTaux = 0, derniereCR = null;
-    for (const p of pvs) {
-      const text = p.pdf_text || delibText[p.id];
-      if (!text) continue;
-      const att = parseAttendance(text);
-      if (!att || (!att.presents_noms.length && att.presents == null)) continue;
-      crSeances++;
-      if (att.en_exercice && att.presents != null) sommeTaux += att.presents / att.en_exercice;
-      derniereCR = { date: p.date, presents: att.presents, en_exercice: att.en_exercice, pouvoirs: att.pouvoirs, votants: att.votants };
-      for (const n of att.presents_noms) (elusMap[n] = elusMap[n] || { present: 0, absent: 0 }).present++;
-      for (const n of att.absents_noms)  (elusMap[n] = elusMap[n] || { present: 0, absent: 0 }).absent++;
-    }
 
     const elus = Object.entries(elusMap).map(([nom, v]) => ({
       nom, present: v.present, absent: v.absent, total: v.present + v.absent,
@@ -396,6 +411,8 @@ router.get("/elus", (req, res) => {
 
     res.json({
       periode: { debut: dates[0] || null, fin: dates[dates.length - 1] || null },
+      annees_dispo,
+      filtre: { from, to },
       total_seances: pvs.length,
       seances_votees,
       total_votes,
@@ -407,6 +424,7 @@ router.get("/elus", (req, res) => {
       presence: { seances_live: live.length, moyenne: presenceMoyenne, pct: presencePct },
       presence_cr,
       elus,
+      seances,
       conseil: {
         maire: getConfig("commune_maire"),
         nb_conseillers: nbConseillers,

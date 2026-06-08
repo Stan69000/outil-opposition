@@ -72,7 +72,12 @@ export const api = {
     seancePrep: (date)  => req("GET", `/analyses/seance-prep${date ? `?date=${date}` : ""}`),
     rapport:      ()    => req("GET", "/analyses/rapport"),
     syncLog:      ()    => req("GET", "/analyses/sync-log"),
-    elus:         ()    => req("GET", "/analyses/elus"),
+    elus:         (from, to) => {
+      const qs = [];
+      if (from) qs.push(`from=${from}`);
+      if (to) qs.push(`to=${to}`);
+      return req("GET", `/analyses/elus${qs.length ? `?${qs.join("&")}` : ""}`);
+    },
     convocations: ()    => req("GET", "/analyses/convocations"),
   },
   jurisprudence: {
