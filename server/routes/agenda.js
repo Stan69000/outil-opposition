@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const { db, getConfig } = require("../db");
+const { assertPublicHttpUrl } = require("../services/safe-fetch");
 const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
 const { trackUsage } = require("../services/ai-tracker");
 
@@ -11,7 +12,9 @@ const router = express.Router();
 async function scrapeOrdreJour() {
   const BASE_URL = getConfig("commune_mairie_url");
   try {
-    const { data: html } = await axios.get(`${BASE_URL}/fr/actualites`, {
+    const url = `${BASE_URL}/fr/actualites`;
+    await assertPublicHttpUrl(url);
+    const { data: html } = await axios.get(url, {
       timeout: 10000,
       headers: { "User-Agent": "Mozilla/5.0 (compatible; Opposition-Fleurieux/1.0)" },
     });

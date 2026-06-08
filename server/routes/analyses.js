@@ -1,7 +1,9 @@
 const express = require("express");
-const { db } = require("../db");
+const { db, getConfig } = require("../db");
 const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");
 const { trackUsage } = require("../services/ai-tracker");
+const { fetchRows, q } = require("../services/ofgl");
+const { parseAttendance, parseFrenchDate, delaiConvocation } = require("../services/cr-parser");
 
 const router = express.Router();
 
@@ -71,59 +73,130 @@ Identifie les PATTERNS SIGNIFICATIFS pour l'opposition. Retourne un JSON valide 
   }
 });
 
-// GET /api/analyses/budget — synthèse budgétaire inter-années depuis les délibérations
+// GET /api/analyses/budget — historique budgétaire + indicateurs + comparaison strate (OFGL officiel)
+const A = {
+  fonctionnement: "Dépenses de fonctionnement",
+  investissement: "Dépenses d'investissement",
+  recettes:       "Recettes de fonctionnement",
+  dette:          "Encours de dette",
+  epargne:        "Epargne brute",
+  personnel:      "Frais de personnel",
+  annuite:        "Annuité de la dette",
+  equipement:     "Dépenses d'équipement",
+  impots:         "Impôts locaux",
+};
+
+// Agrégats comparés à la strate (en euros/habitant).
+const CMP = {
+  depenses_fonctionnement_hbt: A.fonctionnement,
+  recettes_fonctionnement_hbt: A.recettes,
+  depenses_investissement_hbt: A.investissement,
+  encours_dette_hbt:           A.dette,
+};
+
+const pct = (num, den) => (den ? +((num / den) * 100).toFixed(1) : null);
+
 router.get("/budget", async (req, res) => {
+  const insee  = getConfig("commune_insee");
+  const dep    = getConfig("commune_departement");
+  const popMin = parseInt(getConfig("commune_pop_min"), 10) || 0;
+  const popMax = parseInt(getConfig("commune_pop_max"), 10) || 100000;
+  if (!/^\d{4,5}$/.test(insee)) {
+    return res.json({ budgets: [], annees: [], message: `Code INSEE invalide (${insee})` });
+  }
+
   try {
-    // Récupérer délibérations liées au budget (nom PDF ou objet)
-    const budgetPvs = db.prepare(`
-      SELECT id, date, objet, pdf_text, pdfs FROM pvs
-      WHERE (lower(objet) LIKE '%budget%' OR lower(objet) LIKE '%fiscal%' OR lower(pdfs) LIKE '%budget%')
-      AND pdf_text != ''
-      ORDER BY date
-    `).all();
-
-    const stored = db.prepare("SELECT * FROM budgets ORDER BY annee, poste").all();
-
-    if (stored.length > 0) {
-      return res.json({ budgets: stored, source: "cache" });
+    const rows = await fetchRows(`insee=${q(insee)} and agregat in (${Object.values(A).map(q).join(",")})`);
+    if (!rows.length) {
+      return res.json({ budgets: [], annees: [], message: `Aucune donnée OFGL pour la commune (INSEE ${insee}).` });
     }
 
-    if (budgetPvs.length === 0) {
-      return res.json({ budgets: [], message: "Aucun PDF budget analysé. Lancez l'analyse des PDFs budgétaires d'abord." });
+    // Indexe { montant, hbt } par année / agrégat.
+    const byYear = {};
+    let commune = rows[0].com_name;
+    for (const r of rows) {
+      const y = Number(r.exer);
+      const o = (byYear[y] = byYear[y] || { ptot: r.ptot });
+      o[r.agregat] = { montant: r.montant, hbt: r.euros_par_habitant };
+    }
+    const years = Object.keys(byYear).map(Number).sort((a, b) => a - b);
+    const m = (y, key) => Math.round(byYear[y]?.[A[key]]?.montant || 0);
+    const h = (y, key) => Math.round(byYear[y]?.[A[key]]?.hbt || 0);
+
+    const annees = years.map(y => ({
+      annee: y,
+      ptot: byYear[y].ptot || null,
+      fonctionnement: m(y, "fonctionnement"),
+      investissement: m(y, "investissement"),
+      recettes:       m(y, "recettes"),
+      dette:          m(y, "dette"),
+      epargne_brute:  m(y, "epargne"),
+      frais_personnel: m(y, "personnel"),
+      equipement:     m(y, "equipement"),
+      annuite_dette:  m(y, "annuite"),
+      impots_locaux:  m(y, "impots"),
+    }));
+
+    // Lignes pour la vue détaillée (2 postes non chevauchants par an → pas de double comptage).
+    const budgets = [];
+    for (const a of annees) {
+      if (a.fonctionnement) budgets.push({ annee: a.annee, poste: "Dépenses de fonctionnement", montant: a.fonctionnement, nature: "fonctionnement" });
+      if (a.investissement) budgets.push({ annee: a.annee, poste: "Dépenses d'investissement", montant: a.investissement, nature: "investissement" });
     }
 
-    const prompt = `Extrais les données budgétaires de ces délibérations de conseil municipal.
-${budgetPvs.map(p => `Date: ${p.date}\n${p.pdf_text?.slice(0,2000)}`).join("\n\n---\n\n")}
+    // Indicateurs (dernière année).
+    const ly = years[years.length - 1];
+    const py = years[years.length - 2];
+    const epB = m(ly, "epargne"), rec = m(ly, "recettes"), det = m(ly, "dette"), fonc = m(ly, "fonctionnement");
+    const indicateurs = {
+      annee: ly,
+      epargne_brute: epB,
+      taux_epargne: pct(epB, rec),
+      encours_dette: det,
+      taux_endettement: pct(det, rec),
+      capacite_desendettement: epB > 0 ? +(det / epB).toFixed(1) : null,
+      evolution_fonctionnement_pct: py && m(py, "fonctionnement") ? pct(fonc - m(py, "fonctionnement"), m(py, "fonctionnement")) : null,
+      evolution_dette_pct: py && m(py, "dette") ? pct(det - m(py, "dette"), m(py, "dette")) : null,
+      fonctionnement_par_hab: h(ly, "fonctionnement"),
+      dette_par_hab: h(ly, "dette"),
+      ptot: byYear[ly]?.ptot || null,
+    };
 
-Retourne UNIQUEMENT ce JSON :
-{
-  "lignes": [
-    { "annee": 2024, "poste": "Fonctionnement dépenses", "montant": 1250000, "nature": "fonctionnement" },
-    { "annee": 2024, "poste": "Investissement", "montant": 380000, "nature": "investissement" },
-    { "annee": 2024, "poste": "Taxe foncière (taux %)", "montant": 18.5, "nature": "fiscalite" }
-  ]
-}`;
+    // Comparaison à la strate (communes similaires du département), dernière année, en €/hab.
+    let comparaison = null;
+    if (/^\d{1,3}[AB]?$/i.test(dep)) {
+      const simRows = await fetchRows(
+        `dep_code=${q(dep)} and ptot>=${popMin} and ptot<=${popMax} and agregat in (${Object.values(CMP).map(q).join(",")})`
+      );
+      const byCom = {};
+      for (const r of simRows) {
+        if (r.insee === insee) continue;
+        const c = byCom[r.insee] || (byCom[r.insee] = { annee: r.exer, vals: {} });
+        if (r.exer === c.annee && r.euros_par_habitant != null && c.vals[r.agregat] === undefined) {
+          c.vals[r.agregat] = r.euros_par_habitant;
+        }
+      }
+      const communes = Object.values(byCom);
+      const moyennes = {}, fleurieux = {};
+      for (const [key, ag] of Object.entries(CMP)) {
+        const vals = communes.map(c => c.vals[ag]).filter(v => v != null && !isNaN(v));
+        moyennes[key] = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+      }
+      fleurieux.depenses_fonctionnement_hbt = h(ly, "fonctionnement");
+      fleurieux.recettes_fonctionnement_hbt = h(ly, "recettes");
+      fleurieux.depenses_investissement_hbt = h(ly, "investissement");
+      fleurieux.encours_dette_hbt = h(ly, "dette");
+      comparaison = { annee: ly, similaires_count: communes.length, fleurieux, moyennes };
+    }
 
-    const client = getAIClient();
-    const msg = await client.messages.create({
-      model: getAIModel(),
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
+    res.json({
+      source: "OFGL — comptes individuels des communes (officiel)",
+      commune, insee,
+      annees, budgets, indicateurs, comparaison,
     });
-
-    trackUsage("analyses/budget", msg.model, msg.usage);
-    const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
-    const { lignes } = JSON.parse(raw);
-
-    const insert = db.prepare("INSERT INTO budgets (pv_id, annee, poste, montant, nature) VALUES (?,?,?,?,?)");
-    for (const l of lignes) {
-      insert.run(null, l.annee, l.poste, l.montant, l.nature || "fonctionnement");
-    }
-
-    res.json({ budgets: lignes, source: "ai" });
   } catch (err) {
     console.error("Budget error:", err.message);
-    res.status(502).json({ error: err.message });
+    res.status(502).json({ error: "Erreur lors de l'appel à l'API OFGL" });
   }
 });
 
@@ -255,49 +328,147 @@ router.get("/sync-log", (req, res) => {
   })));
 });
 
-// GET /api/analyses/elus — statistiques par élu (présences, votes)
-router.get("/elus", async (req, res) => {
+// GET /api/analyses/elus — statistiques RÉELLES agrégées du conseil (pas de données inventées).
+// Les PV ne publient que les totaux de votes (pour/contre/abstention), jamais les votes
+// nominatifs : impossible de produire des stats fiables PAR élu. On agrège au niveau du conseil.
+router.get("/elus", (req, res) => {
   try {
-    const pvs = db.prepare("SELECT date, objet, votes_pour, votes_contre, votes_abstention, points FROM pvs ORDER BY date").all();
-    const seances = db.prepare("SELECT date, presents FROM seances_live WHERE statut = 'terminée'").all();
+    const pvs  = db.prepare("SELECT id, date, votes_pour, votes_contre, votes_abstention, anomalies, pdf_text FROM pvs ORDER BY date").all();
+    const live = db.prepare("SELECT presents FROM seances_live WHERE statut = 'terminée'").all();
+    const failles = db.prepare("SELECT COUNT(*) AS n FROM failles").get().n;
 
-    const client = getAIClient();
-    const msg = await client.messages.create({
-      model: getAIModel(),
-      max_tokens: 2000,
-      messages: [{
-        role: "user",
-        content: `Tu es analyste des données du conseil municipal de ${communeLabel()}.
+    const dates = pvs.map(p => p.date).filter(Boolean).sort();
+    const total_votes = { pour: 0, contre: 0, abstention: 0 };
+    let seances_votees = 0, unanimes = 0, contestees = 0, anomalies_total = 0;
 
-Voici les séances du conseil (${pvs.length} PVs) :
-${pvs.slice(-20).map(p => `- ${p.date} : ${p.objet} (${p.votes_pour}p/${p.votes_contre}c/${p.votes_abstention}a)`).join("\n")}
+    for (const p of pvs) {
+      total_votes.pour       += p.votes_pour || 0;
+      total_votes.contre     += p.votes_contre || 0;
+      total_votes.abstention += p.votes_abstention || 0;
+      const nbVotes = (p.votes_pour || 0) + (p.votes_contre || 0) + (p.votes_abstention || 0);
+      if (nbVotes > 0) {
+        seances_votees++;
+        if ((p.votes_contre || 0) > 0 || (p.votes_abstention || 0) > 0) contestees++;
+        else unanimes++;
+      }
+      try { anomalies_total += JSON.parse(p.anomalies || "[]").length; } catch (_) {}
+    }
 
-Composition :
-- Mayorité : Maire + 5 adjoints + 9 conseillers
-- Opposition : 4 conseillers
+    const nbConseillers   = parseInt(getConfig("commune_nb_conseillers"), 10) || null;
+    const presenceMoyenne = live.length
+      ? Math.round(live.reduce((a, b) => a + (b.presents || 0), 0) / live.length)
+      : null;
+    const presencePct = (presenceMoyenne != null && nbConseillers)
+      ? Math.round((presenceMoyenne / nbConseillers) * 100)
+      : null;
 
-Sur la base de ces données, génère des statistiques fictives mais réalistes pour chaque élu :
-- Taux de présence estimé
-- Tendance de vote (pour majoritaire, contre parfois)
-- Thèmes d'intervention principale
+    // ── PRÉSENCES depuis la liste nominative du CR (texte des PV) ──────────────────
+    // Un texte de délibération par séance suffit (l'en-tête présence y est répété).
+    const delibText = {};
+    for (const d of db.prepare("SELECT seance_id, pdf_text FROM deliberations WHERE pdf_text != ''").all()) {
+      if (!delibText[d.seance_id]) delibText[d.seance_id] = d.pdf_text;
+    }
 
-Retourne UNIQUEMENT ce JSON :
-{
-  "periode": "2020-2026",
-  "total_seances": ${pvs.length},
-  "elus": [
-    {"nom":"...","role":"...","presence_pct":90,"votes_pour":45,"votes_contre":2,"themes":["Budget","PLU"]}
-  ],
-  "analyse_globale": "..."
-}`,
-      }],
+    const elusMap = {}; // "Prénom NOM" -> { present, absent }
+    let crSeances = 0, sommeTaux = 0, derniereCR = null;
+    for (const p of pvs) {
+      const text = p.pdf_text || delibText[p.id];
+      if (!text) continue;
+      const att = parseAttendance(text);
+      if (!att || (!att.presents_noms.length && att.presents == null)) continue;
+      crSeances++;
+      if (att.en_exercice && att.presents != null) sommeTaux += att.presents / att.en_exercice;
+      derniereCR = { date: p.date, presents: att.presents, en_exercice: att.en_exercice, pouvoirs: att.pouvoirs, votants: att.votants };
+      for (const n of att.presents_noms) (elusMap[n] = elusMap[n] || { present: 0, absent: 0 }).present++;
+      for (const n of att.absents_noms)  (elusMap[n] = elusMap[n] || { present: 0, absent: 0 }).absent++;
+    }
+
+    const elus = Object.entries(elusMap).map(([nom, v]) => ({
+      nom, present: v.present, absent: v.absent, total: v.present + v.absent,
+      presence_pct: (v.present + v.absent) ? Math.round((v.present / (v.present + v.absent)) * 100) : null,
+    })).sort((a, b) => b.total - a.total || (b.presence_pct || 0) - (a.presence_pct || 0));
+
+    const presence_cr = crSeances ? {
+      seances_analysees: crSeances,
+      taux_present_moyen: Math.round((sommeTaux / crSeances) * 100),
+      derniere: derniereCR,
+    } : null;
+
+    res.json({
+      periode: { debut: dates[0] || null, fin: dates[dates.length - 1] || null },
+      total_seances: pvs.length,
+      seances_votees,
+      total_votes,
+      unanimes,
+      contestees,
+      unanimite_pct: seances_votees ? Math.round((unanimes / seances_votees) * 100) : null,
+      anomalies_total,
+      failles_total: failles,
+      presence: { seances_live: live.length, moyenne: presenceMoyenne, pct: presencePct },
+      presence_cr,
+      elus,
+      conseil: {
+        maire: getConfig("commune_maire"),
+        nb_conseillers: nbConseillers,
+        quorum: parseInt(getConfig("commune_quorum"), 10) || null,
+      },
+      note: elus.length
+        ? "Présences extraites de la liste nominative des comptes-rendus. Les votes restent agrégés (les PV ne publient pas les votes nominatifs)."
+        : "Aucun texte de CR analysé : lancez l'extraction des délibérations pour obtenir les présences. Les votes des PV ne sont pas nominatifs.",
     });
-
-    trackUsage("analyses/elus", msg.model, msg.usage);
-    const raw = msg.content[0].text.trim().replace(/```json|```/g, "").trim();
-    res.json(JSON.parse(raw));
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    console.error("Stats conseil error:", err.message);
+    res.status(500).json({ error: "Erreur lors du calcul des statistiques" });
+  }
+});
+
+// GET /api/analyses/convocations — contrôle automatique du délai légal de convocation.
+// Lit la date de convocation dans le CR (texte des délibérations) et la compare à la date
+// de séance. Seuil : 3 jours francs si commune < 3500 hab (L2121-11), sinon 5 (L2121-12).
+router.get("/convocations", (req, res) => {
+  try {
+    const population = parseInt(getConfig("commune_population"), 10) || 0;
+    const seuil = population >= 3500 ? 5 : 3;
+    const article = population >= 3500 ? "CGCT L2121-12" : "CGCT L2121-11";
+
+    const pvs = db.prepare("SELECT id, date, objet, pdf_text FROM pvs ORDER BY date DESC").all();
+    const delibText = {};
+    for (const d of db.prepare("SELECT seance_id, pdf_text FROM deliberations WHERE pdf_text != ''").all()) {
+      if (!delibText[d.seance_id]) delibText[d.seance_id] = d.pdf_text;
+    }
+
+    const seances = [];
+    for (const p of pvs) {
+      const text = p.pdf_text || delibText[p.id];
+      if (!text) continue;
+      const att = parseAttendance(text);
+      if (!att || !att.convocation) continue;
+      const convocISO = parseFrenchDate(att.convocation);
+      const check = delaiConvocation(convocISO, p.date, seuil);
+      if (!check) continue;
+      seances.push({
+        pv_id: p.id,
+        date_seance: p.date,
+        objet: p.objet,
+        convocation: convocISO,
+        convocation_texte: att.convocation,
+        jours_francs: check.jours_francs,
+        conforme: check.conforme,
+      });
+    }
+
+    const non_conformes = seances.filter(s => !s.conforme);
+    res.json({
+      seuil, article,
+      methode: "Jours francs : jour d'envoi de la convocation et jour de séance exclus.",
+      total_controlees: seances.length,
+      conformes: seances.length - non_conformes.length,
+      non_conformes: non_conformes.length,
+      seances,
+    });
+  } catch (err) {
+    console.error("Convocations error:", err.message);
+    res.status(500).json({ error: "Erreur lors du contrôle des délais de convocation" });
   }
 });
 

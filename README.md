@@ -2,7 +2,7 @@
 
 Outil de veille et d'action pour les conseillers municipaux d'opposition.
 
-Commune : **Fleurieux-sur-l'Arbresle** (69210) · ~2000 habitants · Ain / Métropole de Lyon
+Commune : **Fleurieux-sur-l'Arbresle** (69210, INSEE 69086) · ~2350 habitants · Rhône (69) · Communauté de communes du Pays de l'Arbresle
 
 ---
 
@@ -100,6 +100,8 @@ outil-opposition/
 
 ## Installation
 
+> Prérequis : **Node.js ≥ 22** (pour `node:sqlite`) et **poppler-utils** (`pdftotext`) pour l'extraction des PDF natifs (`apt install poppler-utils` / `brew install poppler`).
+
 ```bash
 # Cloner
 git clone https://github.com/Stan69000/outil-opposition.git
@@ -109,7 +111,8 @@ cd outil-opposition
 cd server
 npm install
 cp .env.example .env
-# Remplir .env (ANTHROPIC_API_KEY, PISTE credentials, SMTP, VAPID)
+# Remplir .env : APP_AUTH_TOKEN + ENCRYPTION_KEY (obligatoires en prod),
+#                ANTHROPIC_API_KEY, PISTE credentials, SMTP, VAPID
 node index.js
 
 # Frontend (dev)
@@ -126,6 +129,11 @@ npm run dev
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
 
+# Sécurité (OBLIGATOIRES en production — le serveur refuse de démarrer sinon)
+APP_AUTH_TOKEN=        # openssl rand -hex 24 — token d'accès à l'API
+ENCRYPTION_KEY=        # openssl rand -hex 32 — chiffrement des secrets en base
+AI_DAILY_USD_CAP=5     # plafond de coût IA quotidien (0 = désactivé)
+
 # API PISTE Légifrance (beta.piste.gouv.fr)
 PISTE_OAUTH_CLIENT_ID=...
 PISTE_OAUTH_CLIENT_SECRET=...
@@ -140,9 +148,12 @@ ALERT_EMAIL=
 # PWA Push (généré une fois : npx web-push generate-vapid-keys)
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=         # mailto:contact@votre-domaine.fr
 
-APP_HOST=
+APP_HOST=              # hôte public (CORS prod), ex : 179.237.66.21
 ```
+
+L'API est protégée par token : au premier accès, le client demande `APP_AUTH_TOKEN`, puis le mémorise (localStorage) et l'envoie via l'en-tête `x-app-token`.
 
 ---
 
@@ -161,7 +172,8 @@ Nginx sert le client statique et proxifie `/api` vers le port 3001.
 ## Données
 
 - Base SQLite locale (`server/fleurieux.db`)
-- 62 séances importées automatiquement (2020-2026)
+- Séances et délibérations importées automatiquement depuis le site mairie (2020-2026)
+- 3 séances d'exemple (préfixées `[EXEMPLE]`) sont insérées si la base est vide — supprimables
 - Aucune donnée personnelle ni confidentielle
 
 ---

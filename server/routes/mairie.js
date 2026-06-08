@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const { db, parsePv, getConfig } = require("../db");
+const { assertPublicHttpUrl } = require("../services/safe-fetch");
 
 const router = express.Router();
 
@@ -55,6 +56,7 @@ function nomFromLinkText(text) {
 // Scrape une page (URL) et retourne les séances avec leurs PDFs
 async function scrapePage(url) {
   const { BASE_URL } = getUrls();
+  await assertPublicHttpUrl(url);
   const { data: html } = await axios.get(url, {
     timeout: 12000,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; Opposition-Fleurieux/1.0)" },
@@ -94,6 +96,7 @@ async function scrapePage(url) {
 // Récupère les URLs des années dans le sidebar de la page principale
 async function getYearUrls() {
   const { BASE_URL, MAIN_URL } = getUrls();
+  await assertPublicHttpUrl(MAIN_URL);
   const { data: html } = await axios.get(MAIN_URL, {
     timeout: 10000,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; Opposition-Fleurieux/1.0)" },

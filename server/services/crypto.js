@@ -16,12 +16,12 @@ function getMasterKey() {
   if (raw) {
     return crypto.createHash("sha256").update(raw).digest();
   }
-  // Fallback déterministe basé sur le hostname — mieux que rien,
-  // mais ENCRYPTION_KEY doit être défini en production.
-  const fallback = os.hostname() + ":opposition-fallback-v1";
+  // En production, ENCRYPTION_KEY est obligatoire : pas de fallback devinable.
   if (process.env.NODE_ENV === "production") {
-    console.warn("[crypto] ENCRYPTION_KEY manquant — fallback hostname utilisé. Définir ENCRYPTION_KEY en production !");
+    throw new Error("[crypto] ENCRYPTION_KEY manquant — obligatoire en production.");
   }
+  // Dev uniquement : fallback déterministe basé sur le hostname (mieux que rien).
+  const fallback = os.hostname() + ":opposition-fallback-v1";
   return crypto.createHash("sha256").update(fallback).digest();
 }
 

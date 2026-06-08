@@ -1,10 +1,10 @@
 const { db } = require("../db");
 
-// Prix par token en USD (Anthropic tarifs publics)
+// Prix par token en USD (tarifs publics Anthropic, $/million de tokens)
 const PRICING = {
+  "claude-opus-4-5":   { input: 5 / 1_000_000,  output: 25 / 1_000_000 },
   "claude-sonnet-4-5": { input: 3 / 1_000_000,  output: 15 / 1_000_000 },
-  "claude-opus-4-5":   { input: 15 / 1_000_000, output: 75 / 1_000_000 },
-  "claude-haiku-4-5":  { input: 0.8 / 1_000_000, output: 4 / 1_000_000 },
+  "claude-haiku-4-5":  { input: 1 / 1_000_000,  output: 5 / 1_000_000 },
 };
 
 const insert = db.prepare(

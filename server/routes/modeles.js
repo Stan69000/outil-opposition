@@ -13,16 +13,16 @@ const MODELES_DEFAUT = [
     categorie: "Question écrite",
     contenu: `Monsieur le Maire,
 
-Conformément à l'article L2121-26 du Code Général des Collectivités Territoriales, je me permets de vous adresser la présente question écrite.
+Au titre de mon droit à l'information de conseiller municipal (article L2121-13 du Code Général des Collectivités Territoriales), je me permets de vous adresser la présente question écrite.
 
-Lors de la séance du {{date_seance}}, j'ai constaté que les convocations ont été reçues seulement {{jours}} jours avant la réunion, alors que l'article L2121-10 du CGCT impose un délai minimum de 5 jours francs.
+Lors de la séance du {{date_seance}}, j'ai constaté que les convocations ont été reçues seulement {{jours}} jours avant la réunion, alors que l'article L2121-11 du CGCT impose un délai minimum de 3 jours francs pour les communes de moins de 3 500 habitants.
 
 En conséquence, je vous demande :
 1. De confirmer les dates et modalités d'envoi des convocations pour cette séance ;
 2. De prendre les mesures nécessaires pour que ce délai légal soit respecté à l'avenir ;
 3. De préciser la procédure interne mise en place pour garantir ce respect.
 
-Dans l'attente de votre réponse, que je vous serais reconnaissant(e) de m'adresser dans le délai d'un mois prévu par l'article L2121-26 du CGCT, je vous adresse, Monsieur le Maire, l'expression de ma considération distinguée.
+Dans l'attente de votre réponse, je vous adresse, Monsieur le Maire, l'expression de ma considération distinguée.
 
 {{signataire}}
 Conseiller(ère) municipal(e)

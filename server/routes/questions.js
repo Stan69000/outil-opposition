@@ -5,7 +5,9 @@ const { trackUsage } = require("../services/ai-tracker");
 
 const router = express.Router();
 
-// Date limite réponse = 1 mois après envoi (L2121-26 CGCT)
+// Date limite indicative de réponse = 1 mois après envoi.
+// ATTENTION : le CGCT ne fixe AUCUN délai légal pour les questions écrites des conseillers.
+// Ce délai relève du règlement intérieur du conseil (cadre CGCT L2121-19) s'il en prévoit un.
 function dateLimiteReponse(dateEnvoi) {
   if (!dateEnvoi) return "";
   const d = new Date(dateEnvoi);
@@ -29,7 +31,7 @@ router.get("/", (req, res) => {
 });
 
 router.post("/", (req, res) => {
-  const { objet, texte, destinataire = "maire", date_envoi = "", base_legale = "CGCT L2121-26" } = req.body;
+  const { objet, texte, destinataire = "maire", date_envoi = "", base_legale = "CGCT L2121-13 (information des conseillers) · règlement intérieur" } = req.body;
   if (!objet || !texte) return res.status(400).json({ error: "objet et texte requis" });
 
   const date_limite = date_envoi ? dateLimiteReponse(date_envoi) : "";
@@ -94,12 +96,12 @@ ${pvs.map(p => `${p.date} — ${p.objet}`).join("\n")}
 
 Format attendu :
 - Objet (une ligne concise)
-- Corps de la question (3-4 paragraphes : contexte, question précise, base légale, délai de réponse attendu)
+- Corps de la question (3-4 paragraphes : contexte, question précise, base légale, délai de réponse souhaité)
 - Ton formel et factuel
-- Base légale : CGCT L2121-26 (droit des conseillers à l'information)
+- Base légale : droit à l'information des conseillers (CGCT L2121-13) ; les questions écrites et leur délai de réponse relèvent du règlement intérieur (cadre CGCT L2121-19). NE PAS invoquer de délai légal d'un mois qui n'existe pas dans le CGCT.
 
 Retourne UNIQUEMENT ce JSON :
-{"objet":"...","texte":"...","base_legale":"CGCT L2121-26"}`,
+{"objet":"...","texte":"...","base_legale":"CGCT L2121-13 · règlement intérieur"}`,
     }],
   });
 
@@ -125,7 +127,7 @@ Date d'envoi : ${q.date_envoi}
 Date limite dépassée : ${q.date_limite_reponse}
 Destinataire : ${q.destinataire}
 
-Ton ferme mais respectueux. Mentionne le délai légal CGCT L2121-26, les relances déjà effectuées si applicable.
+Ton ferme mais respectueux. Rappelle le droit à l'information des conseillers (CGCT L2121-13) et le délai de réponse prévu par le règlement intérieur le cas échéant (sans inventer de délai légal d'un mois). Mentionne les relances déjà effectuées si applicable.
 Retourne le texte de la relance directement (pas de JSON).`,
     }],
   });
