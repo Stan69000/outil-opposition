@@ -65,6 +65,74 @@ router.put("/:id", (req, res) => {
   res.json(parseDelib(db.prepare("SELECT * FROM deliberations WHERE id = ?").get(req.params.id)));
 });
 
+// POST /api/deliberations/fill-missing — extrait le texte des délibérations sans pdf_text (SSE)
+router.post("/fill-missing", async (req, res) => {
+  const missing = db.prepare(
+    "SELECT * FROM deliberations WHERE (pdf_text IS NULL OR length(pdf_text) < 100) AND pdf_url != '' ORDER BY id ASC"
+  ).all();
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  send({ type: "total", total: missing.length });
+
+  let done = 0, errors = 0;
+
+  for (const delib of missing) {
+    send({ type: "progress", current: done + 1, total: missing.length, nom: delib.pdf_nom });
+    try {
+      const { text, analysis } = await extractAndAnalyze(delib.pdf_url, delib.pdf_nom);
+      if (analysis.error) {
+        errors++;
+        send({ type: "skip", nom: delib.pdf_nom, reason: analysis.error });
+        continue;
+      }
+
+      let geo = delib.geo || "";
+      let adresse = analysis.adresse_concernee || delib.adresse || "";
+      if (analysis.is_urbanisme && adresse && !geo) {
+        const coords = await geocodeAdresse(adresse);
+        if (coords) { geo = JSON.stringify(coords); adresse = coords.adresse; }
+      }
+
+      db.prepare(`
+        UPDATE deliberations SET
+          pdf_text = @pdf_text, statut = @statut,
+          votes_pour = @pour, votes_contre = @contre, votes_abstention = @abstention,
+          anomalies = @anomalies, points = @points,
+          risque_juridique = @risque, action_opposition = @action,
+          is_urba = @is_urba, adresse = @adresse, geo = @geo
+        WHERE id = @id
+      `).run({
+        id: delib.id,
+        pdf_text: text.slice(0, 15000),
+        statut: (analysis.anomalies?.length > 0) ? "Alerte" : "Analysé",
+        pour: analysis.votes_pour ?? delib.votes_pour ?? 0,
+        contre: analysis.votes_contre ?? delib.votes_contre ?? 0,
+        abstention: analysis.votes_abstention ?? delib.votes_abstention ?? 0,
+        anomalies: JSON.stringify(analysis.anomalies || []),
+        points: JSON.stringify(analysis.points_cles || []),
+        risque: analysis.risque_juridique || "Aucun",
+        action: analysis.action_opposition || "",
+        is_urba: analysis.is_urbanisme ? 1 : 0,
+        adresse,
+        geo,
+      });
+
+      done++;
+      send({ type: "result", nom: delib.pdf_nom, id: delib.id });
+    } catch (err) {
+      errors++;
+      send({ type: "skip", nom: delib.pdf_nom, reason: err.message });
+    }
+  }
+
+  send({ type: "done", done, errors });
+  res.end();
+});
+
 // POST /api/deliberations/extract/:pvId — extrait les délibérations d'une séance (SSE)
 router.post("/extract/:pvId", async (req, res) => {
   const pv = db.prepare("SELECT * FROM pvs WHERE id = ?").get(req.params.pvId);
