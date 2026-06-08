@@ -1705,7 +1705,12 @@ function Analyses({ lois, pvs, failles }) {
               <p style={{ color:t.textMuted, fontSize:"11px", marginBottom:"16px" }}>{convoc.methode}</p>
 
               {convoc.total_controlees === 0 ? (
-                <Card><EmptyState icon="⏱" text="Aucune date de convocation trouvée dans les CR. Lancez l'extraction des délibérations pour activer le contrôle." /></Card>
+                <Card style={{ textAlign:"center", padding:"32px 20px" }}>
+                  <EmptyState icon="⏱" text="Aucune date de convocation trouvée dans les CR. Complétez le texte des délibérations pour activer le contrôle." />
+                  <div style={{ display:"flex", justifyContent:"center", marginTop:"8px" }}>
+                    <FillMissingButton onDone={loadConvoc} />
+                  </div>
+                </Card>
               ) : (
                 <>
                   <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:"10px", marginBottom:"16px" }}>
@@ -4740,14 +4745,69 @@ function JournalTerrain({ pvs, failles }) {
 }
 
 // ── STATS ÉLUS ────────────────────────────────────────────────────────────────
+// Déclenche le backfill du texte des délibérations manquantes (SSE) avec barre de progression.
+function FillMissingButton({ onDone, label = "Compléter les textes manquants" }) {
+  const t = useT();
+  const [state, setState] = useState("idle"); // idle | running | done | error
+  const [prog, setProg] = useState({ cur: 0, total: 0, nom: "" });
+  const [msg, setMsg] = useState(null);
+
+  const run = async () => {
+    setState("running"); setMsg(null); setProg({ cur: 0, total: 0, nom: "" });
+    try {
+      const res = await fetch("/api/deliberations/fill-missing", { method: "POST", headers: authHeaders() });
+      if (!res.ok || !res.body) throw new Error(`Serveur : ${res.status}`);
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "", final = null;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n"); buf = parts.pop();
+        for (const p of parts) {
+          const line = p.split("\n").find(l => l.startsWith("data:"));
+          if (!line) continue;
+          let d; try { d = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (d.type === "total") setProg(pr => ({ ...pr, total: d.total }));
+          else if (d.type === "progress") setProg({ cur: d.current, total: d.total, nom: d.nom });
+          else if (d.type === "done") final = d;
+        }
+      }
+      setState("done");
+      setMsg(final ? `${final.done} délibération(s) complétée(s)${final.errors ? `, ${final.errors} échec(s)` : ""}.` : "Terminé.");
+      onDone && onDone();
+    } catch (e) { setState("error"); setMsg(e.message); }
+  };
+
+  if (state === "running") {
+    const pct = prog.total ? Math.round((prog.cur / prog.total) * 100) : 0;
+    return (
+      <div style={{ fontSize: "12px", color: t.textMuted, maxWidth: "420px" }}>
+        <div style={{ marginBottom: "6px" }}>Extraction {prog.cur}/{prog.total}{prog.nom ? ` — ${prog.nom}` : ""}</div>
+        <div style={{ height: "6px", background: t.border, borderRadius: "3px", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: t.primary, transition: "width 0.3s" }} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+      <Btn onClick={run} variant="ghost" size="sm">{label}</Btn>
+      {msg && <span style={{ fontSize: "12px", color: state === "error" ? t.danger : t.success }}>{msg}</span>}
+    </div>
+  );
+}
+
 function StatsElus() {
   const t = useT();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    api.analyses.elus().then(setData).catch(e => setError(e.message));
+  const load = useCallback(() => {
+    api.analyses.elus().then(d => { setData(d); setError(null); }).catch(e => setError(e.message));
   }, []);
+  useEffect(() => { load(); }, [load]);
 
   if (error) return (
     <div>
@@ -4781,7 +4841,8 @@ function StatsElus() {
       </SectionTitle>
 
       <Card style={{ marginBottom: "16px", borderLeft: `3px solid ${t.warning}` }}>
-        <p style={{ color: t.textSec, fontSize: "12px", lineHeight: 1.6, margin: 0 }}>{data.note}</p>
+        <p style={{ color: t.textSec, fontSize: "12px", lineHeight: 1.6, margin: "0 0 10px 0" }}>{data.note}</p>
+        <FillMissingButton onDone={load} label="Compléter les textes manquants (présences)" />
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: "10px", marginBottom: "16px" }}>
