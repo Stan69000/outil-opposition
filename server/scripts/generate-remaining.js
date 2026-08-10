@@ -2,7 +2,7 @@
 // Steps 2-5 : engagements, budget, tendances, rapport
 
 process.chdir(__dirname + "/..");
-require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
+require("dotenv").config({ path: require("path").join(__dirname, "../.env"), quiet: true });
 
 const { db } = require("../db");
 const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");

@@ -2,7 +2,7 @@
 // Extrait le texte des délibérations sans pdf_text — accès direct DB, sans serveur HTTP
 
 process.chdir(__dirname + "/..");
-require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
+require("dotenv").config({ path: require("path").join(__dirname, "../.env"), quiet: true });
 
 const { db } = require("../db");
 const { extractAndAnalyze } = require("../services/pdf-analyzer");
