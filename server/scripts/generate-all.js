@@ -2,7 +2,7 @@
 // Génération complète : failles, engagements, budget, tendances, rapport citoyen
 
 process.chdir(__dirname + "/..");
-require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
+require("dotenv").config({ path: require("path").join(__dirname, "../.env"), quiet: true });
 
 const { db, getConfig } = require("../db");
 const { getAIClient, getAIModel, communeLabel } = require("../services/ai-client");

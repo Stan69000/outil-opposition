@@ -1,4 +1,4 @@
-require("dotenv").config({ path: require("path").join(__dirname, ".env") });
+require("dotenv").config({ path: require("path").join(__dirname, ".env"), quiet: true });
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
