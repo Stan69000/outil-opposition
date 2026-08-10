@@ -114,7 +114,7 @@ if (!IS_PROD) {
 if (IS_PROD) {
   const dist = path.join(__dirname, "..", "client", "dist");
   app.use(express.static(dist));
-  app.get("*", (_, res) => res.sendFile(path.join(dist, "index.html")));
+  app.get("/{*splat}", (_, res) => res.sendFile(path.join(dist, "index.html")));
 }
 
 // Cron synchro automatique
