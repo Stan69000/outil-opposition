@@ -10,7 +10,7 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.117.1",
+    "@anthropic-ai/sdk": "^0.120.0",
     "axios": "^1.7.2",
     "cheerio": "^1.0.0",
     "cors": "^2.8.5",
