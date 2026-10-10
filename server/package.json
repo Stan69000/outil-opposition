@@ -20,7 +20,7 @@
     "express-rate-limit": "^8.7.0",
     "mammoth": "^1.13.0",
     "node-cron": "^4.6.0",
-    "nodemailer": "^9.0.5",
+    "nodemailer": "^10.0.15",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
